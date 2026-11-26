@@ -354,12 +354,21 @@ export async function rotasFechamento(app: FastifyInstance) {
     const motivo = body.motivo?.trim();
     if (!motivo) return reply.code(400).send({ erro: "Informe o motivo do estorno" });
 
+    const pagAtual = await prisma.pagamento.findUnique({
+      where: { id },
+      select: { valor_centavos: true },
+    });
+    if (!pagAtual) return reply.code(404).send({ erro: "Pagamento não encontrado" });
+
     const tipo = (req.user as any).tipo as TipoUsuario;
     let aprovadorId = Number((req.user as any).id);
     if (!tipoPodeAprovarSemPin(tipo)) {
       const aprov = await validarPinGerente(body.pin, body.aprovador_id);
       if (!aprov) {
-        return reply.code(403).send({ erro: "O estorno precisa do PIN de um gerente.", codigo: "pin_invalido" });
+        return reply.code(403).send({
+          erro: `O estorno de ${formatarDinheiroEscpos(pagAtual.valor_centavos)} precisa do PIN de um gerente.`,
+          codigo: "pin_invalido",
+        });
       }
       aprovadorId = aprov.id;
     }

@@ -4,6 +4,8 @@ import { soTipos, type TipoUsuario } from "../permissoes.js";
 import { registrarAuditoria } from "../operacao/auditoria.js";
 import { proximoCodigo } from "../operacao/sequencia.js";
 import { calcularTotaisAtendimento, pagoEfetivoCentavos } from "../operacao/totais-atendimento.js";
+import { linhaItemCentavos } from "../operacao/totais.js";
+import { formatarDinheiroEscpos } from "../impressao/escpos.js";
 import { Prisma } from "../generated/prisma/client.js";
 import { reservarSenhaBalcao } from "../servicos/senha.js";
 
@@ -394,10 +396,19 @@ export async function rotasAtendimentos(app: FastifyInstance) {
     const body = (req.body ?? {}) as { pin?: string; aprovador_id?: number };
     if (at.pedidos.length && !["ROOT", "ADMIN", "GERENTE"].includes(tipo)) {
       const { validarPinGerente } = await import("../operacao/pin.js");
+      const detalhe = await prisma.atendimento.findUnique({
+        where: { id },
+        include: {
+          pedidos: { include: { itens: { include: { escolhas: true, adicionais: true } } } },
+        },
+      });
+      const valorConta = (detalhe?.pedidos ?? [])
+        .flatMap((pedido) => pedido.itens)
+        .reduce((soma, item) => soma + linhaItemCentavos(item), 0);
       const aprov = await validarPinGerente(body.pin, body.aprovador_id);
       if (!aprov) {
         return reply.code(403).send({
-          erro: "Cancelar esta conta precisa do PIN de um gerente.",
+          erro: `Cancelar esta conta de ${formatarDinheiroEscpos(valorConta)} precisa do PIN de um gerente.`,
           codigo: "pin_invalido",
         });
       }

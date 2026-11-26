@@ -3,6 +3,7 @@ import { prisma } from "../db.js";
 import { ehGestor, exigirCaixa, soTipos, type TipoUsuario } from "../permissoes.js";
 import { registrarAuditoria } from "../operacao/auditoria.js";
 import { validarPinGerente } from "../operacao/pin.js";
+import { formatarDinheiroEscpos } from "../impressao/escpos.js";
 import { imprimirRelatorioCaixa, linhasFechamentoCaixa } from "../impressao/relatorio-caixa.js";
 import { estadoGaveta, pulsarGaveta } from "../servicos/gaveta.js";
 import { configEstoque, resetarEsgotados } from "../servicos/estoque.js";
@@ -153,7 +154,7 @@ export async function rotasCaixa(app: FastifyInstance) {
       const aprov = await validarPinGerente(body.pin, (body as any).aprovador_id);
       if (!aprov) {
         return reply.code(403).send({
-          erro: "Sangria precisa do PIN de um gerente.",
+          erro: `Sangria de ${formatarDinheiroEscpos(valor)} precisa do PIN de um gerente.`,
           codigo: "pin_invalido",
         });
       }

@@ -7,7 +7,7 @@ import {
   type ImpressoraDestino,
 } from "../impressao/destino.js";
 import { documentoProducao } from "../impressao/documentos.js";
-import { enfileirarTrabalho } from "../impressao/fila.js";
+import { enfileirarTrabalho, tentarEnviarTrabalho } from "../impressao/fila.js";
 
 export type ItemRoteavel = {
   id: number;
@@ -210,10 +210,27 @@ export async function enfileirarProducaoPedido(opts: {
       documento_origem_id: origemJob?.id ?? null,
     });
     trabalhos.push(...ids);
+    for (const id of ids) {
+      await tentarEnviarTrabalho(id);
+      const job = await prisma.trabalho_impressao.findUnique({
+        where: { id },
+        select: { status: true, ultimo_erro: true },
+      });
+      if (job?.status === "ERRO" && job.ultimo_erro) avisos.push(job.ultimo_erro);
+    }
   }
 
+  const falhou = trabalhos.length
+    ? (
+        await prisma.trabalho_impressao.findMany({
+          where: { id: { in: trabalhos } },
+          select: { status: true },
+        })
+      ).some((job) => job.status === "ERRO")
+    : false;
+
   return {
-    status: trabalhos.length ? "OK" : "SEM_DESTINO",
+    status: trabalhos.length ? (falhou ? "ERRO" : "OK") : "SEM_DESTINO",
     trabalhos,
     avisos: [...new Set(avisos)],
   };

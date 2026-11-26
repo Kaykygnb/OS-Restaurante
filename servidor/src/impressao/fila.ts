@@ -20,6 +20,12 @@ const BACKOFF_MS = [2_000, 10_000, 30_000, 60_000, 300_000];
 let rodando = false;
 let timer: NodeJS.Timeout | null = null;
 
+function timeoutRedeMs() {
+  const n = Number(process.env.IMPRESSAO_TIMEOUT_MS);
+  if (Number.isFinite(n) && n >= 200 && n <= 60_000) return n;
+  return 8000;
+}
+
 async function enviarParaImpressora(
   impressora: {
     tipo_conexao: string;
@@ -31,7 +37,7 @@ async function enviarParaImpressora(
 ) {
   if (impressora.tipo_conexao === "REDE") {
     if (!impressora.ip) throw new Error("Impressora de rede sem IP");
-    await imprimirRede(impressora.ip, impressora.porta || 9100, dados);
+    await imprimirRede(impressora.ip, impressora.porta || 9100, dados, timeoutRedeMs());
     return;
   }
   if (!impressora.nome_sistema) throw new Error("Impressora de sistema sem nome_sistema");
@@ -54,14 +60,17 @@ export async function recuperarTrabalhosPresos() {
   }
 }
 
-async function processarUm(impressoraId?: number) {
+async function processarUm(impressoraId?: number, trabalhoId?: number) {
   const agora = new Date();
   const trabalho = await prisma.trabalho_impressao.findFirst({
     where: {
+      ...(trabalhoId ? { id: trabalhoId } : {}),
       ...(impressoraId ? { impressora_id: impressoraId } : {}),
       status: { in: ["PENDENTE", "ERRO"] },
       tentativas: { lt: MAX_TENTATIVAS },
-      OR: [{ proxima_tentativa_em: null }, { proxima_tentativa_em: { lte: agora } }],
+      ...(trabalhoId
+        ? {}
+        : { OR: [{ proxima_tentativa_em: null }, { proxima_tentativa_em: { lte: agora } }] }),
     },
     orderBy: { criado_em: "asc" },
     include: { impressora: true },
@@ -80,10 +89,11 @@ async function processarUm(impressoraId?: number) {
     return true;
   }
 
-  await prisma.trabalho_impressao.update({
-    where: { id: trabalho.id },
+  const travou = await prisma.trabalho_impressao.updateMany({
+    where: { id: trabalho.id, status: { in: ["PENDENTE", "ERRO"] } },
     data: { status: "IMPRIMINDO" },
   });
+  if (travou.count !== 1) return false;
 
   try {
     const bytes = Buffer.from(trabalho.conteudo);
@@ -156,6 +166,16 @@ async function tick() {
   } finally {
     rodando = false;
   }
+}
+
+/** Uma passada da fila. Usado no boot do intervalo e nos testes. */
+export async function processarFilaImpressao() {
+  await tick();
+}
+
+/** Tenta o trabalho agora. Falha de rede deixa status ERRO e a próxima tentativa na fila. */
+export async function tentarEnviarTrabalho(id: number) {
+  return processarUm(undefined, id);
 }
 
 export function iniciarFilaImpressao(intervaloMs = 2000) {

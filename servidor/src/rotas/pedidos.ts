@@ -10,6 +10,7 @@ import { gravarPedido } from "../servicos/pedido.js";
 import { estornarItem } from "../servicos/estoque.js";
 import { corpoErro } from "../util/erros.js";
 import { linhaItemCentavos } from "../operacao/totais.js";
+import { formatarDinheiroEscpos } from "../impressao/escpos.js";
 import { publicar } from "../eventos/barramento.js";
 
 type BodyEscolha = { opcao_escolha_id: number; quantidade?: number };
@@ -377,11 +378,19 @@ export async function rotasPedidos(app: FastifyInstance) {
       const tipo = (req.user as any).tipo as TipoUsuario;
       let aprovadorId = Number((req.user as any).id);
       if (!tipoPodeAprovarSemPin(tipo)) {
+        const pedPin = await prisma.pedido.findUnique({
+          where: { id },
+          include: { itens: { include: { escolhas: true, adicionais: true } } },
+        });
+        const valorPedido = (pedPin?.itens ?? []).reduce((s, item) => s + linhaItemCentavos(item), 0);
         const aprov = await validarPinGerente(body.pin, body.aprovador_id);
         if (!aprov) {
           return {
             status: 403,
-            corpo: { erro: "Cancelar o pedido precisa do PIN de um gerente.", codigo: "pin_invalido" },
+            corpo: {
+              erro: `Cancelar o pedido de ${formatarDinheiroEscpos(valorPedido)} precisa do PIN de um gerente.`,
+              codigo: "pin_invalido",
+            },
           };
         }
         aprovadorId = aprov.id;
@@ -509,7 +518,13 @@ export async function rotasPedidos(app: FastifyInstance) {
       if (!tipoPodeAprovarSemPin(tipo)) {
         const aprov = await validarPinGerente(pinBody.pin, pinBody.aprovador_id);
         if (!aprov) {
-          return { status: 403, corpo: { erro: "Cancelar o item precisa do PIN de um gerente.", codigo: "pin_invalido" } };
+          return {
+            status: 403,
+            corpo: {
+              erro: `Cancelar o item de ${formatarDinheiroEscpos(linhaItemCentavos(item))} precisa do PIN de um gerente.`,
+              codigo: "pin_invalido",
+            },
+          };
         }
       }
       const usuario_id = Number((req.user as any).id);

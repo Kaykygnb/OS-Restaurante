@@ -1,5 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import net from "node:net";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,7 +12,7 @@ import { quebrarColunas } from "../src/util/texto.js";
 import { assinar, publicar } from "../src/eventos/barramento.js";
 import { portaConfigurada } from "../src/rede/enderecos.js";
 import { nomeAdicionalCupom } from "../src/util/texto.js";
-import { imprimirRede } from "../src/impressao/rede.js";
+import { enfileirarTrabalho, processarFilaImpressao } from "../src/impressao/fila.js";
 
 let h: Harness;
 
@@ -32,8 +33,39 @@ test("S5 adicional Padrão vira o nome do adicional", () => {
   assert.equal(nomeAdicionalCupom("Bacon", "50g"), "Bacon 50g");
 });
 
-test("S8 impressora inacessível não conta como impressa", async () => {
-  await assert.rejects(() => imprimirRede("127.0.0.1", 1, Buffer.from("cupom"), 400));
+test("S8 impressora que aceita e não lê volta o trabalho para a fila", async () => {
+  const sockets = new Set<net.Socket>();
+  const server = net.createServer((sock) => {
+    sockets.add(sock);
+    sock.pause();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const porta = (server.address() as net.AddressInfo).port;
+  const anterior = process.env.IMPRESSAO_TIMEOUT_MS;
+  process.env.IMPRESSAO_TIMEOUT_MS = "500";
+  try {
+    const imp = await h.prisma.impressora.create({
+      data: { nome: `Trava_${Date.now()}`, tipo_conexao: "REDE", ip: "127.0.0.1", porta, ativo: true },
+    });
+    const job = await enfileirarTrabalho({
+      impressora_id: imp.id,
+      tipo_documento: "PRODUCAO",
+      conteudo: Buffer.alloc(4 * 1024 * 1024, 0x1b),
+    });
+    await processarFilaImpressao();
+    const atual = await h.prisma.trabalho_impressao.findUniqueOrThrow({ where: { id: job.id } });
+    assert.equal(atual.status, "ERRO");
+    assert.match(atual.ultimo_erro ?? "", /Tempo esgotado ao escrever na impressora/);
+    assert.ok(atual.proxima_tentativa_em);
+    assert.equal(atual.impresso_em, null);
+    const impressora = await h.prisma.impressora.findUniqueOrThrow({ where: { id: imp.id } });
+    assert.equal(impressora.ultimo_status, "ERRO");
+  } finally {
+    if (anterior === undefined) delete process.env.IMPRESSAO_TIMEOUT_MS;
+    else process.env.IMPRESSAO_TIMEOUT_MS = anterior;
+    for (const sock of sockets) sock.destroy();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 test("S2 taxa de serviço incide sobre o subtotal depois do desconto", () => {
@@ -376,6 +408,159 @@ test("S4 operação expõe taxa e limite", async () => {
   assert.equal(res.statusCode, 200, res.body);
   assert.equal(typeof res.json().taxa_servico_percentual, "number");
   assert.equal(typeof res.json().limite_desconto_sem_pin_centavos, "number");
+});
+
+async function atendenteComCaixa() {
+  const senha = await bcrypt.hash("Atendente1", 4);
+  const pin = await bcrypt.hash("4321", 4);
+  const atendente = await h.prisma.usuario.create({
+    data: {
+      nome: "Atendente",
+      login: `at_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      tipo_usuario: "ATENDENTE",
+      senha_hash: senha,
+      pode_operar_caixa: true,
+    },
+  });
+  const gerente = await h.prisma.usuario.create({
+    data: {
+      nome: "Gerente PIN",
+      login: `gp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      tipo_usuario: "GERENTE",
+      senha_hash: senha,
+      pin_hash: pin,
+      pode_operar_caixa: true,
+    },
+  });
+  const token = h.app.jwt.sign({ id: atendente.id, tipo: "ATENDENTE" }, { expiresIn: "1h" });
+  return { token, gerenteId: gerente.id };
+}
+
+test("S6 mensagens de sangria, estorno e cancelamento falam em R$", async () => {
+  const { token } = await atendenteComCaixa();
+  const sessao = await h.prisma.caixa_sessao.findFirstOrThrow({ where: { aberta: true } });
+  const sangria = await h.app.inject({
+    method: "POST",
+    url: `/caixa/${sessao.id}/movimentacao`,
+    headers: auth(token),
+    payload: { tipo: "SANGRIA", valor_centavos: 2000, motivo: "troco" },
+  });
+  assert.equal(sangria.statusCode, 403, sangria.body);
+  assert.equal(sangria.json().erro, "Sangria de R$ 20,00 precisa do PIN de um gerente.");
+  assert.equal(sangria.json().erro.includes("centavos"), false);
+  assert.equal(sangria.json().erro.includes("aprovador_id"), false);
+
+  const conta = await abrirContaComItem(h, 6650);
+  const pagamento = await h.app.inject({
+    method: "POST",
+    url: `/atendimentos/${conta.atendimentoId}/pagamentos`,
+    headers: auth(token),
+    payload: { forma_pagamento_id: h.formaPixId, valor_centavos: 1050 },
+  });
+  assert.equal(pagamento.statusCode, 201, pagamento.body);
+  const estorno = await h.app.inject({
+    method: "POST",
+    url: `/pagamentos/${pagamento.json().id}/estornar`,
+    headers: auth(token),
+    payload: { motivo: "cliente desistiu" },
+  });
+  assert.equal(estorno.statusCode, 403, estorno.body);
+  assert.equal(estorno.json().erro, "O estorno de R$ 10,50 precisa do PIN de um gerente.");
+  assert.equal(estorno.json().erro.includes("centavos"), false);
+  assert.equal(estorno.json().erro.includes("aprovador_id"), false);
+
+  const item = await h.prisma.pedido_item.findFirstOrThrow({ where: { pedido_id: conta.pedidoId } });
+  const cancelar = await h.app.inject({
+    method: "POST",
+    url: `/pedido-itens/${item.id}/cancelar`,
+    headers: auth(token),
+    payload: { motivo: "erro de lançamento" },
+  });
+  assert.equal(cancelar.statusCode, 403, cancelar.body);
+  assert.equal(cancelar.json().erro, "Cancelar o item de R$ 66,50 precisa do PIN de um gerente.");
+  assert.equal(cancelar.json().erro.includes("centavos"), false);
+  assert.equal(cancelar.json().erro.includes("aprovador_id"), false);
+});
+
+test("S10 cancelar conta e item exige PIN e aceita o do gerente", async () => {
+  const { token, gerenteId } = await atendenteComCaixa();
+  const conta = await abrirContaComItem(h, 6650);
+  const semPin = await h.app.inject({
+    method: "POST",
+    url: `/atendimentos/${conta.atendimentoId}/cancelar`,
+    headers: auth(token),
+    payload: { motivo: "cliente foi embora" },
+  });
+  assert.equal(semPin.statusCode, 403, semPin.body);
+  assert.equal(semPin.json().codigo, "pin_invalido");
+  assert.equal(semPin.json().erro, "Cancelar esta conta de R$ 66,50 precisa do PIN de um gerente.");
+  const ainda = await h.prisma.atendimento.findUniqueOrThrow({ where: { id: conta.atendimentoId } });
+  assert.equal(ainda.status, "ABERTO");
+
+  const comPin = await h.app.inject({
+    method: "POST",
+    url: `/atendimentos/${conta.atendimentoId}/cancelar`,
+    headers: auth(token),
+    payload: { motivo: "cliente foi embora", pin: "4321", aprovador_id: gerenteId },
+  });
+  assert.equal(comPin.statusCode, 200, comPin.body);
+  const fechada = await h.prisma.atendimento.findUniqueOrThrow({ where: { id: conta.atendimentoId } });
+  assert.equal(fechada.status, "CANCELADO");
+
+  const outra = await abrirContaComItem(h, 6650);
+  const item = await h.prisma.pedido_item.findFirstOrThrow({ where: { pedido_id: outra.pedidoId } });
+  const itemSem = await h.app.inject({
+    method: "POST",
+    url: `/pedido-itens/${item.id}/cancelar`,
+    headers: auth(token),
+    payload: { motivo: "saiu errado" },
+  });
+  assert.equal(itemSem.statusCode, 403, itemSem.body);
+  assert.equal(itemSem.json().codigo, "pin_invalido");
+  const vivo = await h.prisma.pedido_item.findUniqueOrThrow({ where: { id: item.id } });
+  assert.equal(vivo.cancelado, false);
+
+  const itemCom = await h.app.inject({
+    method: "POST",
+    url: `/pedido-itens/${item.id}/cancelar`,
+    headers: auth(token),
+    payload: { motivo: "saiu errado", pin: "4321", aprovador_id: gerenteId },
+  });
+  assert.equal(itemCom.statusCode, 200, itemCom.body);
+  assert.equal(itemCom.json().item.cancelado, true);
+});
+
+test("falha de impressão no pedido responde 201 sem duplicar e deixa o job em ERRO", async () => {
+  const cat = await h.prisma.categoria.create({ data: { nome: `Falha_${Date.now()}` } });
+  const imp = await h.prisma.impressora.create({
+    data: { nome: "Impressora caída", tipo_conexao: "REDE", ip: "127.0.0.1", porta: 1, ativo: true },
+  });
+  await h.prisma.impressora_categoria.create({ data: { impressora_id: imp.id, categoria_id: cat.id } });
+  const prod = await h.prisma.produto.create({
+    data: { nome: `Item_${Date.now()}`, categoria_id: cat.id, exige_preparo: true },
+  });
+  const variante = await h.prisma.produto_variante.create({
+    data: { nome: "Padrão", preco_centavos: 1500, produto_id: prod.id },
+  });
+  const at = await h.prisma.atendimento.create({
+    data: { codigo_atendimento: `ATF_${Date.now()}`, tipo_atendimento: "BALCAO", usuario_id: h.usuarioId },
+  });
+  const antes = await h.prisma.pedido.count();
+  const res = await h.app.inject({
+    method: "POST",
+    url: `/atendimentos/${at.id}/pedidos`,
+    headers: auth(),
+    payload: { itens: [{ produto_variante_id: variante.id, quantidade: 1 }] },
+  });
+  assert.equal(res.statusCode, 201, res.body);
+  assert.equal(await h.prisma.pedido.count(), antes + 1);
+  const pedidoId = res.json().pedido.id as number;
+  const jobs = await h.prisma.trabalho_impressao.findMany({ where: { pedido_id: pedidoId } });
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0]?.status, "ERRO");
+  assert.ok(jobs[0]?.proxima_tentativa_em);
+  const deNovo = await h.prisma.pedido.count({ where: { atendimento_id: at.id } });
+  assert.equal(deNovo, 1);
 });
 
 test("dashboard agrega dia, semana e mês e o funcionário, sem lucro", async () => {
