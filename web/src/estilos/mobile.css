@@ -1,0 +1,104 @@
+/* Adaptações para toque e áreas seguras, sem esconder conteúdo que excede a tela. */
+.dlg-fundo { z-index:100; }
+.dlg-corpo { overscroll-behavior:contain; scrollbar-gutter:stable; }
+.menu-celular { display:grid; gap:4px; }
+.menu-celular h3 { font-size:12px; color:var(--ink3); margin:16px 10px 4px; text-transform:uppercase; letter-spacing:.05em; }
+.menu-celular .nav-link { min-height:48px; width:100%; text-align:left; border:0; background:transparent; }
+.menu-celular .nav-link.ativo { background:var(--act-bg); }
+@media (max-width:699px) {
+  :root { --barra-mobile:calc(72px + env(safe-area-inset-bottom)); }
+  .area { padding:12px 12px 24px; }
+  .topo { align-items:flex-start; }
+  .topo h1 { font-size:19px; overflow-wrap:anywhere; }
+  .cab-pagina, .painel-bloco-cab, .catalogo-prods-cab { flex-wrap:wrap; gap:12px; }
+  .cartao,.painel-bloco,.quadro-col,.quadro-card,.drawer-bloco,.editor-grupo,.item-lista,.prod-info { min-width:0; }
+  .campo,.fld,.linha-campos,.pilha,.config-pagina,.conta-layout,.cardapio-grid-3 { min-width:0; }
+  .btn,.btn-pri,.btn-prim,.btn-sec,.btn-ghost,.btn-perigo { white-space:normal; overflow-wrap:anywhere; max-width:100%; }
+  input,select,textarea { max-width:100%; font-size:16px; }
+  .segmento { flex-wrap:wrap; min-width:0; max-width:100%; }
+  .segmento button { white-space:normal; min-width:0; flex:1 1 auto; padding:8px 10px; }
+  .item-lista { flex-wrap:wrap; overflow-wrap:anywhere; }
+  .item-lista > span { min-width:0; }
+  .campo-imagem { align-items:flex-start; padding:10px; gap:10px; }
+  .campo-imagem > img { width:56px; height:56px; }
+  .campo-imagem > div { min-width:0; }
+  .campo-imagem-escolher { max-width:100%; white-space:normal; }
+  .dlg { max-height:calc(100dvh - env(safe-area-inset-top) - 8px); }
+  .dlg-topo { padding:16px 16px 10px; }
+  .dlg-topo h2 { font-size:19px; overflow-wrap:anywhere; }
+  .dlg-topo .dlg-x { flex-shrink:0; }
+  .dlg-corpo { padding:12px 16px 16px; }
+  .dlg-pe { padding:12px 16px max(12px,env(safe-area-inset-bottom)); display:flex; flex-wrap:wrap; gap:8px; }
+  .dlg-pe > .btn { flex:1 1 120px; }
+  .dlg-pe > .btn-pri,.dlg-pe > .btn-ok { flex:1 1 100%; }
+  .editor-pe { width:100%; gap:8px; }
+  .editor-pe-sec,.editor-pe-pri { flex-wrap:wrap; width:100%; gap:8px; }
+  .editor-pe-sec > button,.editor-pe-pri > button { flex:1 1 100px; min-width:0; }
+  .etapas-editor .etapa-rotulo { white-space:normal; text-overflow:clip; line-height:1.25; }
+  .etapas-editor button { min-height:66px; }
+  .form-acoes { width:100%; gap:8px; }
+  .form-acoes > button,.form-acoes > a { flex:1 1 125px; }
+  .form-acoes.compactas > button { flex:0 1 auto; }
+  .painel-drawer { scroll-margin-top:90px; }
+  .tabela-wrap,.tabela-wrapper { max-width:100%; min-width:0; overflow:auto; }
+  .tabela th,.tabela td { padding:10px 8px; overflow-wrap:anywhere; }
+  .contagem-linha,.contagem-linha.gestor { grid-template-columns:minmax(0,1fr) minmax(100px,120px); gap:8px; }
+  .linha-preco { grid-template-columns:minmax(0,1fr) auto; }
+  .linha-limites { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .venda-barra-cel { bottom:var(--barra-mobile); gap:8px; }
+  .venda-barra-cel .btn { min-width:0; flex:1; }
+  .venda-barra-cel > div { min-width:0; }
+  .venda-linha { grid-template-columns:44px 28px 44px minmax(0,1fr); gap:8px; padding:12px 0; border-bottom:1px solid var(--line2); }
+  .venda-linha > .venda-nome { grid-column:1/-1; grid-row:1; overflow-wrap:anywhere; }
+  .venda-linha > .num { grid-column:4; justify-self:end; }
+  .venda-prod-nome { padding-right:0; overflow-wrap:anywhere; }
+  .pdv-barra-carrinho { bottom:calc(var(--barra-mobile) + 8px); z-index:25; left:12px; right:12px; padding:12px; flex-wrap:wrap; gap:4px 12px; }
+  .pdv-pagina.com-barra-carrinho { padding-bottom:100px; }
+  .pdv-carrinho.aberto { max-height:calc(100dvh - env(safe-area-inset-top) - 8px) !important; background:var(--surf); }
+  .pdv-carrinho-acoes { position:sticky; bottom:0; background:var(--surf); padding-bottom:max(12px,env(safe-area-inset-bottom)); }
+  .tabela-docs > .config-grid-2 { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  .tabela-docs > .config-grid-2 > strong { grid-column:1/-1; }
+  .quadro { grid-template-columns:minmax(0,1fr); }
+  .qr-endereco { font-size:16px; }
+}
+@media (max-width:359px) {
+  .grade-4 { grid-template-columns:minmax(0,1fr); }
+  .cartao,.painel-bloco { padding:12px; }
+  .venda-prod { padding:10px; }
+  .venda-prod-nome { font-size:14px; }
+  .venda-prod-preco { font-size:15px; }
+  .editor-grupo { padding:12px; }
+  .campo-imagem { flex-direction:column; }
+}
+@media (max-height:500px) and (orientation:landscape) {
+  .dlg { max-height:calc(100dvh - 12px); }
+  .dlg-topo { padding:10px 16px 6px; }
+  .dlg-pe { padding:8px 16px; }
+}
+
+@media (max-width:699px) {
+ .tabela-cartoes,.tabela-cartoes tbody { display:block; width:100%; }
+ .tabela-cartoes thead { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+ .tabela-cartoes tr { display:grid; gap:0; padding:10px 0; border-bottom:1px solid var(--line); }
+ .tabela-cartoes td { display:block; position:relative; min-height:32px; border:0; padding:7px 0 7px 104px; }
+ .tabela-cartoes td::before { content:attr(data-label); position:absolute; left:0; top:9px; width:94px; color:var(--ink3); font-size:12px; font-weight:600; }
+ .tabela-cartoes td[data-label="Ações"] { display:block; padding-left:0; }
+ .tabela-cartoes td[data-label="Ações"]::before { display:none; }
+ .tabela-cartoes td p { margin:4px 0; }
+}
+
+@media (max-width:699px) {
+ .dlg-corpo pre { white-space:pre-wrap; overflow-wrap:anywhere; }
+ .dlg-corpo p,.feedback-card,.codigo-conf,.quadro-card > strong { overflow-wrap:anywhere; }
+ .config-grid-2 { grid-template-columns:minmax(0,1fr); }
+ .composicao-caixa > div { flex-wrap:wrap; gap:4px 12px; }
+ .grafico-func .gf-linha { grid-template-columns:minmax(0,1fr); }
+ .grafico-func .gf-resumo { grid-column:1; }
+ .grafico-func .gf-barras { min-width:0; }
+}
+
+@media (max-width:699px) {
+ .btn.btn-ic,.cat-toolbar .btn-ic { padding:0; min-width:44px; min-height:44px; flex-shrink:0; }
+ .btn-link { min-height:44px; }
+ .dlg-x { width:44px; }
+}

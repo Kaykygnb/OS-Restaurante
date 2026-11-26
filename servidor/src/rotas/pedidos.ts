@@ -12,6 +12,7 @@ import { corpoErro } from "../util/erros.js";
 import { linhaItemCentavos } from "../operacao/totais.js";
 import { formatarDinheiroEscpos } from "../impressao/escpos.js";
 import { publicar } from "../eventos/barramento.js";
+import { liberarMesaSeSemItens } from "../operacao/liberar-mesa.js";
 
 type BodyEscolha = { opcao_escolha_id: number; quantidade?: number };
 type BodyAdicional = { adicional_variante_id: number; quantidade?: number };
@@ -65,12 +66,27 @@ export async function rotasPedidos(app: FastifyInstance) {
       include: { categorias: { select: { categoria_id: true } } },
     });
     const categorias = new Set<number>();
+    let impressorasEstacao = 0;
     for (const imp of impressoras) {
       const nome = imp.nome.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
       const marcada = imp.estacao === "cozinha" || imp.estacao === "bar" ? imp.estacao : null;
       const inferida = marcada ?? (/\bbar\b|drink|bebida/.test(nome) ? "bar" : nome.includes("cozinha") ? "cozinha" : null);
       if (inferida !== estacao) continue;
+      impressorasEstacao += 1;
       for (const cat of imp.categorias) categorias.add(cat.categoria_id);
+    }
+    // Sem impressora/categoria da estação: cozinha mostra tudo que exige preparo (setup típico 1 impressora).
+    // Bar só lista quando houver roteamento configurado — senão fica vazio de propósito.
+    const filtrarPorCategoria = categorias.size > 0;
+    const semRoteamento = !filtrarPorCategoria && impressorasEstacao === 0;
+    if (semRoteamento && estacao === "bar") {
+      return {
+        estacao,
+        atraso_min: atrasoMin,
+        agora_servidor: new Date().toISOString(),
+        pedidos: [],
+        aviso: "Configure uma impressora do bar (estação + categorias) para ver pedidos aqui.",
+      };
     }
     const agora = new Date();
     const pedidos = await prisma.pedido.findMany({
@@ -121,7 +137,8 @@ export async function rotasPedidos(app: FastifyInstance) {
             .filter((item) => {
               const prod = item.produto_variante.produto;
               if (!prod.exige_preparo || prod.categoria.nao_imprime || item.cancelado) return false;
-              return categorias.has(prod.categoria_id);
+              if (filtrarPorCategoria) return categorias.has(prod.categoria_id);
+              return true;
             })
             .map((item) => ({
               id: item.id,
@@ -139,6 +156,9 @@ export async function rotasPedidos(app: FastifyInstance) {
       atraso_min: atrasoMin,
       agora_servidor: agora.toISOString(),
       pedidos: lista,
+      aviso: filtrarPorCategoria
+        ? undefined
+        : "Sem categorias na impressora da cozinha — mostrando todos os itens que exigem preparo.",
     };
   });
 
@@ -468,6 +488,8 @@ export async function rotasPedidos(app: FastifyInstance) {
           };
         }
 
+        await liberarMesaSeSemItens(prisma, pedido.atendimento_id);
+
         await registrarAuditoria(prisma, {
           usuario_id,
           acao: "CANCELAR_PEDIDO",
@@ -568,6 +590,8 @@ export async function rotasPedidos(app: FastifyInstance) {
           avisos: [err instanceof Error ? err.message : "Falha ao imprimir cancelamento"],
         };
       }
+
+      await liberarMesaSeSemItens(prisma, item.pedido.atendimento_id);
 
       await registrarAuditoria(prisma, {
         usuario_id,

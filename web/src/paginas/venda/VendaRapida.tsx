@@ -45,7 +45,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
   const [cliente, setCliente] = useState(() => lerRascunho(modo).cliente);
   const [desconto, setDesconto] = useState<Desconto>(null);
   const [aprovDesc, setAprovDesc] = useState<Aprovacao | undefined>();
-  const [opcoes, setOpcoes] = useState<{ produto: ProdutoPdv; trocar?: CarrinhoLinha } | null>(null);
+  const [opcoes, setOpcoes] = useState<{ produto: ProdutoPdv; trocar?: CarrinhoLinha; varianteId?: number } | null>(null);
   const [pagar, setPagar] = useState<{ forma?: number; chave: string } | null>(null);
   const [verDesconto, setVerDesconto] = useState(false);
   const [verCarrinho, setVerCarrinho] = useState(false);
@@ -119,7 +119,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
         return;
       }
       if (precisaOpcoes(p, aba === MAIS && !busca ? varianteId : undefined)) {
-        setOpcoes({ produto: p });
+        setOpcoes({ produto: p, varianteId: aba === MAIS && !busca ? varianteId : undefined });
         return;
       }
       const v = p.variantes.find((x) => x.id === varianteId) ?? p.variantes[0];
@@ -230,7 +230,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
       </label>
       <div className="venda-linhas" aria-label="Itens da venda">
         {carrinho.length === 0 ? (
-          <p className="muted" style={{ textAlign: "center", padding: "24px 8px" }}>
+          <p className="muted venda-vazio">
             Toque num produto para adicionar.
           </p>
         ) : (
@@ -370,7 +370,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
 
       <aside className="venda-carrinho cartao" aria-label="Venda">
         <div className="entre">
-          <h2 style={{ margin: 0 }}>{balcao ? "Pedido balcão" : "Venda rápida"}</h2>
+          <h2>{balcao ? "Pedido balcão" : "Venda rápida"}</h2>
           <button type="button" className="btn btn-link" disabled={!carrinho.length} onClick={() => setConfirmarLimpar(true)}>
             Limpar <span className="kbd">Esc</span>
           </button>
@@ -381,7 +381,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
       <div className="venda-barra-cel">
         <div>
           <div className="muted pequeno">{contagem}</div>
-          <strong style={{ fontSize: 20 }}>{formatarReais(t.total)}</strong>
+          <strong className="barra-total">{formatarReais(t.total)}</strong>
         </div>
         <button type="button" className="btn btn-pri btn-g" disabled={!carrinho.length} onClick={() => setVerCarrinho(true)}>
           {balcao ? "Ver e enviar" : "Ver e cobrar"}
@@ -402,6 +402,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
         <OpcoesProduto
           produto={opcoes.produto}
           inicial={opcoes.trocar}
+          varianteId={opcoes.varianteId}
           onFechar={() => setOpcoes(null)}
           onAdicionar={(l) => {
             const velha = opcoes.trocar;

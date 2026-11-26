@@ -6,6 +6,7 @@ import "./estilos/global.css";
 // Redesenho: base neutra (fonte do sistema, 1 cor de ação). Vem depois para valer sobre o global.
 import "./estilos/ui.css";
 import "./estilos/ux.css";
+import "./estilos/mobile.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

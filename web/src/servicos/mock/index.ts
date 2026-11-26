@@ -1077,11 +1077,12 @@ rota("GET", "/mesas", () => {
   return ok(
     b.mesas.map((m) => {
       const at = b.atendimentos.find((a) => a.mesa_id === m.id && a.status === "ABERTO");
+      const comItens = !!at?.pedidos.some((p) => p.itens.some((i) => !i.cancelado));
       return {
         ...m,
-        status: at ? "OCUPADA" : "LIVRE",
+        status: comItens ? "OCUPADA" : "LIVRE",
         atendimento_aberto: at
-          ? { id: at.id, codigo_atendimento: at.codigo_atendimento, cliente_nome: at.cliente_nome, tipo_atendimento: at.tipo_atendimento, aberto_em: at.aberto_em, total_centavos: totaisAt(b, at).total_centavos }
+          ? { id: at.id, codigo_atendimento: at.codigo_atendimento, cliente_nome: at.cliente_nome, tipo_atendimento: at.tipo_atendimento, aberto_em: at.aberto_em, total_centavos: totaisAt(b, at).total_centavos, com_itens: comItens }
           : null,
       };
     }),

@@ -31,11 +31,11 @@ export default function FilaImpressao() {
     <button type="button" className="btn" disabled={busy} onClick={async () => void carregar()}>Atualizar fila</button>
     {erro ? <p role="alert">{erro}</p> : null}{ok ? <p role="status">{ok}</p> : null}
     <p>Últimos 100 trabalhos. A reimpressão cria uma nova via.</p>
-    {!lista.length ? <p>Nenhum trabalho neste filtro.</p> : <div className="tabela-wrap"><table className="tabela"><thead><tr><th>Documento</th><th>Atendimento</th><th>Impressora</th><th>Situação</th><th>Ações</th></tr></thead><tbody>{lista.map(t => <tr key={t.id}>
-      <td><strong>{rotulo(t.tipo_documento)} #{t.id}</strong><br/><small>{new Date(t.criado_em).toLocaleString("pt-BR")}</small></td>
-      <td>{t.atendimento_id ? <Link to={`/painel/pdv/${t.atendimento_id}`}>Atendimento #{t.atendimento_id}</Link> : "—"}</td>
-      <td>{t.impressora?.nome ?? "Sem impressora"}</td><td>{rotulo(t.status)} · {t.tentativas} tentativa(s){t.ultimo_erro ? <p role="status">{t.ultimo_erro}</p> : null}</td>
-      <td><div className="form-acoes"><button type="button" className="btn" disabled={busy} onClick={() => void acao(t.id, "reimprimir")}>Reimprimir</button>
+    {!lista.length ? <p>Nenhum trabalho neste filtro.</p> : <div className="tabela-wrap"><table className="tabela tabela-cartoes" role="table"><thead><tr><th>Documento</th><th>Atendimento</th><th>Impressora</th><th>Situação</th><th>Ações</th></tr></thead><tbody>{lista.map(t => <tr key={t.id}>
+      <td data-label="Documento"><strong>{rotulo(t.tipo_documento)} #{t.id}</strong><br/><small>{new Date(t.criado_em).toLocaleString("pt-BR")}</small></td>
+      <td data-label="Atendimento">{t.atendimento_id ? <Link to={`/painel/pdv/${t.atendimento_id}`}>Atendimento #{t.atendimento_id}</Link> : "—"}</td>
+      <td data-label="Impressora">{t.impressora?.nome ?? "Sem impressora"}</td><td data-label="Situação">{rotulo(t.status)} · {t.tentativas} tentativa(s){t.ultimo_erro ? <p role="status">{t.ultimo_erro}</p> : null}</td>
+      <td data-label="Ações"><div className="form-acoes"><button type="button" className="btn" disabled={busy} onClick={() => void acao(t.id, "reimprimir")}>Reimprimir</button>
       {gestor && !["IMPRESSO", "CANCELADO", "IMPRIMINDO"].includes(t.status) ? <button type="button" className="btn btn-perigo" disabled={busy} onClick={() => void acao(t.id, "cancelar")}>Cancelar trabalho</button> : null}</div></td>
     </tr>)}</tbody></table></div>}
 

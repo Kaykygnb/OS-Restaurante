@@ -372,7 +372,7 @@ function AbaEstabelecimento({
 
   return (
     <>
-      <div className="faixa info" style={{ marginBottom: 12 }}>
+      <div className="faixa info mb-12">
         <span>
           <strong>{configurado ? "Celulares da equipe" : "Primeira configuração: conecte os celulares"}</strong> · mostre o QR deste PC para os garçons entrarem pelo navegador ou pelo app Android.
         </span>
@@ -1038,7 +1038,7 @@ function AbaImpressoras({
             </div>
           </header>
 
-          <div className="abas" style={{ marginBottom: 14 }}>
+          <div className="abas mb-14">
             <button
               type="button"
               className={`aba${filtro === "1" ? " on" : ""}`}

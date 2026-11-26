@@ -8,6 +8,7 @@ import Avisos from "../componentes/Avisos";
 import Modal from "../componentes/Modal";
 import { useAviso } from "../hooks/useAviso";
 import { api, novaChaveIdempotencia } from "../servicos/api";
+import { confirmar as confirmarAcao } from "../servicos/dialogos";
 import { formatarReais } from "../util/dinheiro";
 import { nomeAdicional, tituloAtendimento } from "../util/rotulos";
 import {
@@ -180,7 +181,7 @@ export default function Pdv() {
   const totalMontagem = Math.max(1, qtdItem) * ((variante?.preco_centavos ?? 0)
     + (variante?.grupos_escolhas ?? []).flatMap(g => g.opcoes).reduce((s,o) => s + o.preco_extra_centavos * (escolhasSel[o.id] ?? 0), 0)
     + (produto?.grupos_adicionais ?? []).flatMap(g => g.adicionais).flatMap(a => a.variantes).reduce((s,v) => s + v.preco_centavos * (adicionaisSel[v.id] ?? 0), 0));
-  function addCarrinho() {
+  async function addCarrinho() {
     if (produto?.esgotado || produto?.variantes.find(v => v.id === varianteId)?.esgotado) return setAvisoMontagem("Esta opção está esgotada.");
     if (!produto || !variante) return;
     for (const g of variante.grupos_escolhas) {
@@ -211,6 +212,16 @@ export default function Pdv() {
           }))
       )
     );
+    const qtd = Math.max(1, qtdItem);
+    if (qtd > 1 && (escolhas.length > 0 || adicionais.length > 0)) {
+      const ok = await confirmarAcao(
+        `As ${qtd} unidades vão com as mesmas opções/adicionais. Confirma? Se for diferente, volte a quantidade para 1 e lance cada uma.`,
+      );
+      if (!ok) {
+        setQtdItem(1);
+        return;
+      }
+    }
     const nome =
       variante.nome.toLowerCase() === "padrão" || variante.nome.toLowerCase() === "padrao"
         ? produto.nome
@@ -223,7 +234,7 @@ export default function Pdv() {
         produto_variante_id: variante.id,
         nome,
         preco_centavos: variante.preco_centavos,
-        quantidade: Math.max(1, qtdItem),
+        quantidade: qtd,
         observacao: obs.trim(),
         escolhas,
         adicionais,
@@ -231,7 +242,7 @@ export default function Pdv() {
     ]);
     setProduto(null);
     setAvisoMontagem("");
-    setOk(`${Math.max(1, qtdItem)}× ${nome} no pedido`);
+    setOk(`${qtd}× ${nome} no pedido`);
   }
 
   async function enviar() {
@@ -386,7 +397,7 @@ export default function Pdv() {
             )}
           </div>
           {produto && variante ? (
-            <Dialogo titulo={`Montar ${produto.nome}`} onFechar={() => setProduto(null)} pe={<><strong className="montagem-total">{formatarReais(totalMontagem)}</strong><button type="button" className="btn btn-pri" onClick={addCarrinho}>Adicionar ao pedido</button></>}>
+            <Dialogo titulo={`Montar ${produto.nome}`} onFechar={() => setProduto(null)} pe={<><strong className="montagem-total">{formatarReais(totalMontagem)}</strong><button type="button" className="btn btn-pri" onClick={() => void addCarrinho()}>Adicionar ao pedido</button></>}>
               <div className="pilha">
 
                 {produto.variantes.length > 1 ? (

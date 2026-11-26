@@ -1,20 +1,30 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import Icone from "./Icone";
 
+let abertos = 0;
+let overflowAnterior = "";
+
 type Props = {
   titulo: string;
   sub?: ReactNode;
   children?: ReactNode;
   pe?: ReactNode;
+  /** ~720px — formulários médios */
   largo?: boolean;
+  /** ~900px — editor de produto e wizards densos */
+  xl?: boolean;
   onFechar: () => void;
   /** Esc fecha (padrão). Desligue durante um envio. */
   fecharComEsc?: boolean;
 };
 
 /** Diálogo do redesenho: no PC é centralizado, no celular vira folha que sobe do rodapé. Esc e "X" fecham. */
-export default function Dialogo({ titulo, sub, children, pe, largo, onFechar, fecharComEsc = true }: Props) {
+export default function Dialogo({ titulo, sub, children, pe, largo, xl, onFechar, fecharComEsc = true }: Props) {
   const id = useId();
+  useEffect(() => {
+    if (abertos++ === 0) { overflowAnterior = document.body.style.overflow; document.body.style.overflow = "hidden"; }
+    return () => { if (--abertos === 0) document.body.style.overflow = overflowAnterior; };
+  }, []);
   const caixa = useRef<HTMLDivElement>(null);
   const fechar = useRef(onFechar);
   useEffect(() => {
@@ -23,7 +33,7 @@ export default function Dialogo({ titulo, sub, children, pe, largo, onFechar, fe
 
   useEffect(() => {
     const antes = document.activeElement as HTMLElement | null;
-    const alvo = caixa.current?.querySelector<HTMLElement>("[data-foco], input, select, textarea, button:not(.dlg-x)");
+    const alvo = caixa.current?.querySelector<HTMLElement>("[data-foco]") ?? caixa.current?.querySelector<HTMLElement>("input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], button:not(.dlg-x):not(:disabled)");
     alvo?.focus();
     return () => antes?.focus?.();
   }, []);
@@ -55,7 +65,7 @@ export default function Dialogo({ titulo, sub, children, pe, largo, onFechar, fe
 
   return (
     <div className="dlg-fundo" onMouseDown={(e) => e.target === e.currentTarget && fecharComEsc && onFechar()}>
-      <div ref={caixa} className={`dlg${largo ? " dlg-largo" : ""}`} role="dialog" aria-modal="true" aria-labelledby={id}>
+      <div ref={caixa} className={`dlg${xl ? " dlg-xl" : largo ? " dlg-largo" : ""}`} role="dialog" aria-modal="true" aria-labelledby={id}>
         <div className="dlg-topo">
           <div>
             <h2 id={id}>{titulo}</h2>

@@ -6,17 +6,17 @@ test("produto: valida, retoma rascunho, salva dois preços com escolhas e edita"
   await entrar(page,"ze"); await page.goto("/painel/cardapio"); await page.getByRole("button",{name:"Novo produto",exact:true}).click();
   let dlg=page.getByRole("dialog"); await dlg.getByRole("button",{name:"Continuar",exact:true}).click(); await expect(dlg.getByRole("alert")).toBeVisible();
   await dlg.getByLabel("Nome do produto").fill("Pastel E2E"); await dlg.getByRole("button",{name:"Continuar",exact:true}).click();
-  await dlg.getByLabel("Nome da apresentação").fill("Individual"); await dlg.getByLabel("Preço (R$)",{exact:false}).first().fill("15,50");
-  await dlg.getByRole("button",{name:"Adicionar apresentação"}).click(); await dlg.getByLabel("Nome da apresentação").nth(1).fill("Duplo"); await dlg.getByLabel("Preço (R$)",{exact:false}).nth(1).fill("25,00");
+  await dlg.locator(".linha-preco").getByLabel("Nome",{exact:false}).fill("Individual"); await dlg.getByLabel("Preço (R$)",{exact:false}).first().fill("15,50");
+  await dlg.getByRole("button",{name:"Adicionar apresentação"}).click(); await dlg.locator(".linha-preco").getByLabel("Nome",{exact:false}).nth(1).fill("Duplo"); await dlg.getByLabel("Preço (R$)",{exact:false}).nth(1).fill("25,00");
   await dlg.getByRole("button",{name:"Continuar",exact:true}).click(); await dlg.getByRole("button",{name:"Adicionar grupo de escolhas"}).click();
-  await dlg.getByLabel("Nome do grupo").fill("Molho"); await dlg.getByLabel("Nome da opção").fill("Pimenta"); await semOverflow(page);
+  await dlg.getByLabel("Nome do grupo").fill("Molho"); await dlg.getByLabel(/^Opção/).fill("Pimenta"); await semOverflow(page);
   await page.keyboard.press("Tab"); expect(await dlg.evaluate(el => el.contains(document.activeElement))).toBe(true);
   await dlg.getByRole("button",{name:"Fechar",exact:true}).last().click(); await page.getByRole("dialog").last().getByRole("button",{name:"Confirmar ação"}).click();
   await page.getByRole("button",{name:"Novo produto",exact:true}).click(); dlg=page.getByRole("dialog"); await expect(dlg.getByLabel("Nome do produto")).toHaveValue("Pastel E2E");
-  await dlg.getByRole("button",{name:/4. Revisão/}).click(); await expect(dlg).toContainText("Individual"); await expect(dlg).toContainText("Duplo");
+  await dlg.getByRole("button",{name:/Revisão/}).click(); await expect(dlg).toContainText("Individual"); await expect(dlg).toContainText("Duplo");
   await page.evaluate(() => localStorage.setItem("mock_offline","1")); await dlg.getByRole("button",{name:"Salvar produto",exact:true}).click(); await expect(dlg.getByRole("alert")).toContainText("rascunho");
   await page.evaluate(() => localStorage.removeItem("mock_offline")); await dlg.getByRole("button",{name:"Salvar produto",exact:true}).click(); await expect(page.getByRole("dialog")).toHaveCount(0); await expect(page.getByText("Pastel E2E",{exact:true})).toBeVisible();
-  const linha=page.locator(".produtos-lista > li",{hasText:"Pastel E2E"}); await linha.getByRole("button",{name:"Editar produto",exact:true}).click(); await expect(page.getByRole("dialog").getByLabel("Nome do produto")).toHaveValue("Pastel E2E");
+  const linha=page.locator(".produtos-lista > li",{hasText:"Pastel E2E"}); await linha.getByRole("button",{name:"Editar",exact:true}).click(); await expect(page.getByRole("dialog").getByLabel("Nome do produto")).toHaveValue("Pastel E2E");
 });
 test("usuário: perfil inicial e senha divergente com retorno visível", async ({page}) => {
   await entrar(page,"ze"); await page.goto("/painel/usuarios"); await page.getByRole("button",{name:/Novo usuário/}).click(); await semOverflow(page);
@@ -41,5 +41,5 @@ test("divisão incompleta não confirma; valor restante apenas compõe a divisã
 
 test("adicionais: erro de categoria fica visível no editor amplo",async ({page}) => {
  await entrar(page,"ze"); await page.goto("/painel/cardapio"); await page.getByRole("button",{name:/Adicionais da categoria/}).click(); await page.getByRole("button",{name:"Novo grupo",exact:true}).click();
- const form=page.locator("form",{has:page.getByRole("heading",{name:"Novo grupo de adicionais"})}); await form.getByLabel("Nome",{exact:true}).fill("Proteínas"); await form.getByRole("button",{name:"Criar",exact:true}).click(); await expect(page.locator(".painel-lista").getByRole("alert")).toContainText("categoria"); await semOverflow(page);
+ const form=page.locator("form",{has:page.getByRole("heading",{name:"Novo grupo de adicionais"})}); await form.getByLabel("Nome",{exact:true}).fill("Proteínas"); await form.getByRole("button",{name:"Criar",exact:true}).click(); await expect(page.locator(".catalogo-prods").getByRole("alert")).toContainText("categoria"); await semOverflow(page);
 });

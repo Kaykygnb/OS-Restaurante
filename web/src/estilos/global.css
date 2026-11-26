@@ -1,22 +1,24 @@
+/* Tokens legados alinhados ao redesenho (ui.css é a fonte canônica). */
 :root {
-  --ink: #142019;
-  --ink-soft: #24352c;
-  --panel: #1b2a22;
-  --line: rgba(255, 255, 255, 0.08);
-  --mist: #eef2ef;
-  --paper: #f7f9f7;
-  --text: #152018;
-  --muted: #5d6b62;
-  --accent: #c4f04d;
-  --accent-ink: #1a2a12;
-  --danger: #d64545;
+  --ink: #1f2328;
+  --ink-soft: #2b3138;
+  --panel: #2b3138;
+  --line: #d5d9df;
+  --mist: #f4f5f7;
+  --paper: #ffffff;
+  --text: #1f2328;
+  --muted: #6a737d;
+  --accent: #1f5fd1;
+  --accent-ink: #ffffff;
+  --danger: #c62828;
   --sidebar-w: 260px;
   --sidebar-w-collapsed: 76px;
-  --radius: 14px;
-  --font: "Outfit", sans-serif;
-  --display: "Syne", sans-serif;
-  --shadow: 0 18px 40px rgba(20, 32, 25, 0.08);
+  --radius: 8px;
+  --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --display: var(--font);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --card-line: #e6e8ec;
 }
 
 *,
@@ -35,10 +37,7 @@ body {
   margin: 0;
   font-family: var(--font);
   color: var(--text);
-  background:
-    radial-gradient(1200px 600px at 10% -10%, #dce8df 0%, transparent 55%),
-    radial-gradient(900px 500px at 100% 0%, #e7f0c8 0%, transparent 45%),
-    var(--mist);
+  background: var(--mist);
 }
 
 button,
@@ -544,12 +543,12 @@ a {
 .form-inline button,
 .form-produto button[type="submit"],
 .form-drawer button[type="submit"] {
-  border: 0;
-  border-radius: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
   padding: 0 14px;
-  background: var(--ink);
+  background: var(--accent);
   color: #fff;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -927,7 +926,7 @@ a {
   border-radius: 999px;
   border: 1px solid rgba(20, 32, 25, 0.18);
   background: #fff;
-  color: #6a7870;
+  color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
   font-style: italic;
@@ -1224,7 +1223,7 @@ a {
 .cardapio-hero-copy { display: grid; gap: 7px; }
 .cardapio-kicker,
 .painel-sobretitulo {
-  color: #68766b;
+  color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.13em;
@@ -1300,10 +1299,10 @@ a {
 .cardapio-tab.ativa { color: var(--text); }
 .cardapio-tab.ativa::after { background: var(--ink); }
 .tab-contagem { display: grid; place-items: center; min-width: 23px; height: 22px; padding: 0 6px; border-radius: 7px; background: rgba(20, 32, 25, 0.07); font-size: 0.72rem; }
-.tab-subtitulo { color: #819087; font-size: 0.73rem; font-weight: 500; }
-.feedback-card { margin: 0; padding: 11px 14px; border: 1px solid transparent; border-radius: 11px; font-size: 0.9rem; }
-.feedback-erro { color: #9d3434; background: #fff1f0; border-color: #f2cecb; }
-.feedback-ok { color: #31683a; background: #eff8ee; border-color: #d2e8ce; }
+.tab-subtitulo { color: var(--muted); font-size: 0.73rem; font-weight: 500; }
+.feedback-card { margin: 0; padding: 12px 14px; border: 1px solid transparent; border-radius: 8px; font-size: 0.9rem; }
+.feedback-erro { color: #8e1c1c; background: #fdecec; border-color: #f2cecb; }
+.feedback-ok { color: #12512a; background: #e5f3e8; border-color: #c9e6cf; }
 
 /* A grade dá mais área à lista e só reserva espaço para o editor quando ele existe. */
 .cardapio-grid-3 { grid-template-columns: minmax(205px, 0.72fr) minmax(0, 2.2fr); gap: 14px; }
@@ -1315,11 +1314,11 @@ a {
 .painel-bloco-cab { align-items: center; margin-bottom: 15px; }
 .painel-bloco-cab h2 { font-size: 1.05rem; }
 .painel-bloco-cab p { margin: 4px 0 0; color: var(--muted); font-size: 0.76rem; }
-.painel-bloco-cab .painel-sobretitulo { margin: 0 0 4px; color: #849087; font-size: 0.62rem; }
+.painel-bloco-cab .painel-sobretitulo { margin: 0 0 4px; color: var(--muted); font-size: 0.62rem; }
 .cab-contagem { padding: 5px 9px; border-radius: 8px; background: rgba(20, 32, 25, 0.055); color: #617066 !important; font-size: 0.72rem !important; font-weight: 700; white-space: nowrap; }
 .form-inline { gap: 6px; margin-bottom: 14px; }
 .form-inline input { min-width: 0; padding: 10px 11px; font-size: 0.83rem; }
-.form-inline button { min-width: 40px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font-size: 1.15rem; }
+.form-inline button { min-width: 40px; border-radius: 8px; background: var(--accent); color: #fff; font-size: 1.15rem; }
 .lista-cat { gap: 4px; }
 .lista-cat li.cat-linha { grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px; }
 .cat-handle { padding: 8px 3px; font-size: 0.75rem; }
@@ -1335,16 +1334,16 @@ a {
 .busca-wrap { position: relative; display: flex; align-items: center; min-width: 0; }
 .busca-wrap > span { position: absolute; left: 12px; color: #748178; font-size: 1.25rem; pointer-events: none; }
 .busca-prod { min-height: 42px; padding: 10px 12px 10px 36px; border-color: var(--card-line); font-size: 0.86rem; }
-.busca-prod:focus, .form-inline input:focus, .form-drawer input:focus { border-color: #8ca555; box-shadow: 0 0 0 3px rgba(196, 240, 77, 0.2); }
-.btn-prim { min-height: 42px; border-radius: 10px; background: var(--ink); transition: transform 140ms ease, background 140ms ease; }
-.btn-prim:hover { transform: translateY(-1px); background: #24372d; }
+.busca-prod:focus, .form-inline input:focus, .form-drawer input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.btn-prim { min-height: 44px; border-radius: 8px; background: var(--accent); color: #fff; border: 1px solid var(--accent); transition: background 140ms ease; }
+.btn-prim:hover { background: #174aa6; }
 .lista-prod { gap: 0; }
 .prod-item { align-items: center; gap: 13px; padding: 15px 6px; border-bottom-color: rgba(20, 32, 25, 0.07); }
 .prod-item:last-child { border-bottom: 0; }
 .prod-item.editando { margin: 4px -8px; padding-right: 10px; padding-left: 10px; box-shadow: inset 3px 0 var(--accent); }
-.prod-avatar { display: grid; place-items: center; width: 54px; height: 54px; flex: 0 0 auto; border: 1px solid rgba(20, 32, 25, 0.07); border-radius: 13px; background: linear-gradient(145deg, #f2f5ed, #e3eadb); color: #52614e; font-family: var(--display); font-weight: 800; object-fit: cover; }
-.campo-imagem { display: flex; align-items: center; gap: 13px; padding: 12px; border: 1px solid rgba(20, 32, 25, 0.1); border-radius: 14px; background: rgba(255, 255, 255, 0.58); }
-.campo-imagem > img { width: 76px; height: 76px; flex: 0 0 auto; border-radius: 12px; object-fit: cover; background: #edf1e8; }
+.prod-avatar { display: grid; place-items: center; width: 54px; height: 54px; flex: 0 0 auto; border: 1px solid var(--card-line); border-radius: 10px; background: #eef0f3; color: var(--muted); font-family: var(--display); font-weight: 800; object-fit: cover; }
+.campo-imagem { display: flex; align-items: center; gap: 13px; padding: 12px; border: 1px solid var(--card-line); border-radius: 10px; background: #fff; }
+.campo-imagem > img { width: 76px; height: 76px; flex: 0 0 auto; border-radius: 10px; object-fit: cover; background: #eef0f3; }
 .campo-imagem > div { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
 .campo-imagem > div > strong, .campo-imagem > div > span { width: 100%; }
 .campo-imagem > div > span { color: var(--muted); font-size: .76rem; }
@@ -1512,7 +1511,7 @@ a {
 
 .pdv-prod:hover,
 .pdv-prod.ativo {
-  border-color: #8ca555;
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(196, 240, 77, 0.22);
 }
 
@@ -1576,7 +1575,7 @@ a {
 .pdv-chip.on,
 .btn-sec.on-sel {
   background: #e8f3c9;
-  border-color: #8ca555;
+  border-color: var(--accent);
 }
 
 .pdv-montagem-rodape {
@@ -1924,7 +1923,7 @@ a {
 
 .btn-sec.on-sel {
   background: #e8f3c9;
-  border-color: #8ca555;
+  border-color: var(--accent);
 }
 
 @media (max-width: 960px) {
@@ -1968,7 +1967,7 @@ a {
 }
 
 .mesa-tile:hover {
-  border-color: #8ca555;
+  border-color: var(--accent);
   transform: translateY(-1px);
 }
 
@@ -2192,7 +2191,7 @@ a {
 .config-form .campo input:focus,
 .config-form .campo select:focus,
 .config-form .campo textarea:focus {
-  border-color: #8ca555;
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(196, 240, 77, 0.2);
 }
 
@@ -2243,7 +2242,7 @@ a {
   }
 }
 .prod-lado { min-width: 100px; gap: 1px; }
-.preco-legenda { color: #849087; font-size: 0.65rem; }
+.preco-legenda { color: var(--muted); font-size: 0.65rem; }
 .prod-preco { font-size: 1.05rem; }
 .prod-acoes { margin-top: 3px; }
 .prod-edit-btn { padding: 5px 8px; color: var(--ink); font-size: 0.75rem; }
@@ -2254,16 +2253,16 @@ a {
 .vazio-icone { display: grid; place-items: center; width: 42px; height: 42px; margin-bottom: 4px; border-radius: 14px; background: #f0f3ed; color: #657565; font-size: 1.25rem; }
 
 /* O editor continua parte da página para preservar o contexto, com cabeçalho claro. */
-.painel-drawer { border-color: rgba(20, 32, 25, 0.1); background: #fbfcfa; }
-.form-produto-titulo { position: sticky; z-index: 2; top: -18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -18px -18px 0; padding: 15px 18px; border-bottom: 1px solid var(--card-line); background: rgba(251, 252, 250, 0.96); backdrop-filter: blur(10px); }
+.painel-drawer { border-color: var(--card-line); background: #fff; }
+.form-produto-titulo { position: sticky; z-index: 2; top: -18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -18px -18px 0; padding: 15px 18px; border-bottom: 1px solid var(--card-line); background: rgba(255, 255, 255, 0.96); backdrop-filter: blur(10px); }
 .form-produto-titulo > div { display: grid; gap: 3px; }
 .form-produto-titulo strong { font-family: var(--display); font-size: 1rem; }
-.drawer-fechar { width: 32px; height: 32px; padding: 0; color: #67746b; font-size: 1.35rem; }
-.drawer-fechar:hover { background: rgba(20, 32, 25, 0.07); color: var(--text); }
+.drawer-fechar { width: 32px; height: 32px; padding: 0; color: var(--muted); font-size: 1.35rem; }
+.drawer-fechar:hover { background: #eef0f3; color: var(--text); }
 .drawer-bloco { padding: 15px 0; border-bottom-color: var(--card-line); }
 .bloco-variante-titulo { font-size: 0.85rem; }
 .ajuda { font-size: 0.75rem; }
-.form-acoes { position: sticky; bottom: -1px; z-index: 1; margin: 0 -4px; padding: 11px 4px 2px; background: linear-gradient(0deg, #fbfcfa 72%, rgba(251, 252, 250, 0)); }
+.form-acoes { position: sticky; bottom: -1px; z-index: 1; margin: 0 -4px; padding: 11px 4px 2px; background: linear-gradient(0deg, #fff 72%, rgba(255, 255, 255, 0)); }
 
 /* A aba de adicionais reutiliza cartões e formulários, sem mudar as regras já salvas. */
 .cardapio-grid-adic .painel-cats { position: sticky; }
@@ -2619,7 +2618,7 @@ a {
   background: #fff;
 }
 .pdv-adicional.on {
-  border-color: #8ca555;
+  border-color: var(--accent);
   background: #f3f9e3;
 }
 .pdv-adicional button {

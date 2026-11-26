@@ -25,6 +25,7 @@ import Pdv from "./paginas/Pdv";
 import Relatorios from "./paginas/relatorios/Relatorios";
 import Promocoes from "./paginas/promocoes/Promocoes";
 import Cozinha from "./paginas/cozinha/Cozinha";
+import PedidosPanorama from "./paginas/pedidos/PedidosPanorama";
 import Usuarios from "./paginas/Usuarios";
 import { registrarAoExpirarSessao } from "./servicos/api";
 
@@ -57,6 +58,7 @@ const router = createBrowserRouter(createRoutesFromElements(
             <Route path="pdv/:atendimentoId" element={<Pdv />} />
             <Route path="conta/:atendimentoId" element={<RequerCaixa><Conta /></RequerCaixa>} />
             <Route path="delivery/*" element={<Delivery />} />
+            <Route path="comandas" element={<PedidosPanorama />} />
             <Route path="clientes" element={<Clientes />} />
             <Route path="pedidos" element={<Cozinha />} />
             <Route path="cozinha" element={<Cozinha />} />

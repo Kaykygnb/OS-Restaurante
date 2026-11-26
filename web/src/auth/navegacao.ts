@@ -23,6 +23,7 @@ export const ITENS_NAV: ItemNav[] = [
   { to: "/painel/mesas", rotulo: "Mesas", icone: "mesas", atalho: "F3", perfis: OPS },
   { to: "/painel/balcao", rotulo: "Balcão", icone: "cardapio", perfis: OPS },
   { to: "/painel/delivery", rotulo: "Delivery", icone: "delivery", atalho: "F4", perfis: OPS, modulo: (m) => m.delivery },
+  { to: "/painel/comandas", rotulo: "Pedidos", icone: "lupa", perfis: OPS },
   { to: "/painel/pedidos", rotulo: "Cozinha e bar", icone: "cozinha", perfis: [...GESTAO, "COZINHEIRO"] },
   { to: "/painel/caixa", rotulo: "Caixa", icone: "caixa", atalho: "F8", perfis: OPS, caixa: true },
   { to: "/painel/clientes", rotulo: "Clientes", icone: "clientes", perfis: OPS },
@@ -45,7 +46,7 @@ export function itensDoPerfil(tipo: string | undefined, m: Modulos, podeCaixa = 
 
 /** Celular: 4 botões fixos + "Mais" (o resto vai numa folha). */
 export function barraInferior(itens: ItemNav[]): { fixos: ItemNav[]; mais: ItemNav[] } {
-  const prefer = ["/painel", "/painel/mesas", "/painel/venda", "/painel/balcao", "/painel/delivery", "/painel/pedidos"];
+  const prefer = ["/painel", "/painel/comandas", "/painel/mesas", "/painel/venda", "/painel/balcao", "/painel/delivery", "/painel/pedidos"];
   const fixos = prefer.map((p) => itens.find((i) => i.to === p)).filter((i): i is ItemNav => !!i).slice(0, 4);
   return { fixos, mais: itens.filter((i) => !fixos.includes(i)) };
 }
@@ -61,10 +62,11 @@ export function tituloDaRota(pathname: string): { titulo: string; caminho?: stri
     "/painel/mesas": { titulo: "Mesas", caminho: "Toque numa mesa livre para abrir, ou numa ocupada para ver a conta" },
     "/painel/delivery": { titulo: "Delivery", caminho: "Pedidos de entrega de hoje" },
     "/painel/delivery/novo": { titulo: "Delivery › Novo pedido", caminho: "Comece pelo telefone do cliente" },
+    "/painel/comandas": { titulo: "Pedidos", caminho: "Panorama de mesa, balcão e delivery · buscar e filtrar" },
     "/painel/clientes": { titulo: "Clientes", caminho: "Busque por nome ou telefone" },
     "/painel/caixa": { titulo: "Caixa", caminho: "Abrir, sangria, suprimento e fechar" },
     "/painel/pedidos": { titulo: "Cozinha e bar", caminho: "Pedidos para preparar, por estação" },
-    "/painel/cardapio": { titulo: "Cardápio", caminho: "Categorias, produtos e adicionais" },
+    "/painel/cardapio": { titulo: "Cardápio", caminho: "Produtos, preços e adicionais" },
     "/painel/usuarios": { titulo: "Usuários", caminho: "Equipe, perfis e PIN" },
     "/painel/configuracoes": { titulo: "Configurações" },
     "/painel/configuracoes/entrega": { titulo: "Configurações › Entrega", caminho: "Origem, raio, faixas por km e bairros" },

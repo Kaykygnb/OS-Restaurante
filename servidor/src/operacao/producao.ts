@@ -33,6 +33,12 @@ export type ResultadoImpressao = {
   avisos: string[];
 };
 
+/** Extras são por unidade no banco; no cupom multiplica pela qtd do item (2× pastel + 1 bacon → 2x bacon). */
+function rotuloExtra(qtdItem: number, qtdExtra: number, nome: string) {
+  const total = Math.max(1, qtdItem) * Math.max(1, qtdExtra);
+  return total > 1 ? `${total}x ${nome}` : nome;
+}
+
 function mapItensCupom(itens: ItemRoteavel[]) {
   return itens.map((i) => {
     const linha: {
@@ -46,8 +52,8 @@ function mapItensCupom(itens: ItemRoteavel[]) {
       quantidade: i.quantidade,
       nome: i.nome_produto,
       observacao: i.observacao,
-      escolhas: i.escolhas.map((e) => (e.quantidade > 1 ? `${e.quantidade}x ${e.nome_opcao}` : e.nome_opcao)),
-      adicionais: i.adicionais.map((a) => (a.quantidade > 1 ? `${a.quantidade}x ${a.nome_adicional}` : a.nome_adicional)),
+      escolhas: i.escolhas.map((e) => rotuloExtra(i.quantidade, e.quantidade, e.nome_opcao)),
+      adicionais: i.adicionais.map((a) => rotuloExtra(i.quantidade, a.quantidade, a.nome_adicional)),
     };
     const categoria = i.produto_variante.produto.categoria?.nome;
     if (categoria) linha.categoria = categoria;

@@ -347,53 +347,57 @@ export default function AdicionaisPainel({ categorias, setErro: reportarErro, se
   }
 
   return (
-    <div className="cardapio-grid-adic">
-      <section className="painel-bloco painel-cats">
-        <header className="painel-bloco-cab">
+    <div className="catalogo-layout catalogo-adicionais">
+      <section className="cartao catalogo-cats">
+        <header className="catalogo-prods-cab">
           <h2 className="titulo-com-ajuda">
             Grupos
             <Ajuda texto="Um grupo (ex.: Proteínas) aparece nos produtos das categorias marcadas. Use exclusões pra tirar itens específicos." />
           </h2>
-          <span>{grupos.length}</span>
+          <span className="tag">{grupos.length}</span>
         </header>
 
         <button
           type="button"
-          className="btn-prim btn-bloco"
+          className="btn btn-pri"
           onClick={async () => { if (await podeTrocarEdicao()) setCriandoGrupo(v => !v); }}
         >
           {criandoGrupo ? "Cancelar" : "Novo grupo"}
         </button>
 
-        <ul className="lista-cat" style={{ marginTop: 12 }}>
-          {grupos.length === 0 && !carregando ? <li className="vazio">Nenhum grupo ainda.</li> : null}
+        <ul className="categorias-lista">
+          {grupos.length === 0 && !carregando ? <li className="muted" style={{ padding: "8px 10px" }}>Nenhum grupo ainda.</li> : null}
           {grupos.map((g) => (
-            <li key={g.id} className="cat-linha cat-linha-simples">
-              <button
-                type="button"
-                className={`cat-item${g.id === grupoId ? " ativa" : ""}`}
-                onClick={async () => { if (await podeTrocarEdicao()) setGrupoId(g.id); }}
-              >
-                <span className="cat-nome">{g.nome}</span>
-                <span className="cat-qtd">{g.adicionais.length}</span>
-              </button>
-              <div className="cat-acoes">
+            <li key={g.id} className={g.id === grupoId ? "ativa" : ""}>
+              <div className="cat-linha">
                 <button
                   type="button"
-                  className="btn-icon btn-icon-danger"
-                  aria-label={`Excluir grupo ${g.nome}`}
-                  title="Excluir"
-                  onClick={async () => void excluirGrupo(g.id)}
+                  className="cat-btn"
+                  onClick={async () => { if (await podeTrocarEdicao()) setGrupoId(g.id); }}
                 >
-                  ×
+                  <span className="cat-nome">{g.nome}</span>
+                  <span className="tag">{g.adicionais.length}</span>
                 </button>
+                {g.id === grupoId ? (
+                  <div className="cat-toolbar">
+                    <button
+                      type="button"
+                      className="btn btn-ic"
+                      aria-label={`Excluir grupo ${g.nome}`}
+                      title="Excluir"
+                      onClick={async () => void excluirGrupo(g.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </li>
           ))}
         </ul>
       </section>
 
-      <section className="painel-bloco painel-lista">
+      <section className="cartao catalogo-prods">
         {erroLocal ? <p role="alert" className="feedback-card feedback-erro">{erroLocal}</p> : null}
         {criandoGrupo ? (
           <Formulario className="form-drawer" onSubmit={criarGrupo}>
@@ -431,9 +435,9 @@ export default function AdicionaisPainel({ categorias, setErro: reportarErro, se
           <p className="vazio">Selecione ou crie um grupo.</p>
         ) : (
           <>
-            <header className="painel-bloco-cab">
+            <header className="catalogo-prods-cab">
               <h2>{selecionado.nome}</h2>
-              <span>{selecionado.adicionais.length}</span>
+              <span className="tag">{selecionado.adicionais.length}</span>
             </header>
 
             <Formulario className="drawer-bloco form-drawer" onSubmit={salvarGrupo}>
@@ -543,12 +547,12 @@ export default function AdicionaisPainel({ categorias, setErro: reportarErro, se
               </button>
             </Formulario>
 
-            <ul className="lista-prod">
+            <ul className="produtos-lista">
               {selecionado.adicionais.length === 0 ? (
                 <li className="vazio">Nenhum adicional neste grupo.</li>
               ) : null}
               {selecionado.adicionais.map((a) => (
-                <li key={a.id} className={`prod-item${editandoAdicionalId === a.id ? " editando" : ""}`}>
+                <li key={a.id} className={editandoAdicionalId === a.id ? "editando" : undefined}>
                   {editandoAdicionalId === a.id ? (
                     <Formulario className="form-drawer form-edit-adic" onSubmit={salvarAdicional}>
                       <CampoImagem
@@ -618,12 +622,12 @@ export default function AdicionaisPainel({ categorias, setErro: reportarErro, se
                         </div>
                       </div>
                       <div className="form-acoes">
-                        <button type="submit" disabled={salvando}>
+                        <button type="submit" className="btn btn-pri" disabled={salvando}>
                           Salvar
                         </button>
                         <button
                           type="button"
-                          className="btn-ghost"
+                          className="btn-link"
                           onClick={async () => setEditandoAdicionalId(null)}
                         >
                           Cancelar
@@ -633,32 +637,33 @@ export default function AdicionaisPainel({ categorias, setErro: reportarErro, se
                   ) : (
                     <>
                       <img
-                        className="prod-avatar"
                         src={origemImagemCardapio(a.caminho_imagem)}
                         alt=""
                         loading="lazy"
                         onError={(e) => { e.currentTarget.src = IMAGEM_PADRAO_CARDAPIO; }}
                       />
                       <div className="prod-info">
-                        <strong>{a.nome}</strong>
-                        <span className="prod-meta">
+                        <div className="prod-topo">
+                          <strong>{a.nome}</strong>
+                        </div>
+                        <p className="prod-precos">
                           máx. {a.qtd_max} ·{" "}
                           {a.adicional_variantes
                             .map((v) => `${v.nome} ${formatarReais(v.preco_centavos)}`)
                             .join(" · ")}
-                        </span>
+                        </p>
                       </div>
                       <div className="prod-acoes">
                         <button
                           type="button"
-                          className="btn-ghost"
+                          className="btn"
                           onClick={async () => abrirEditarAdicional(a)}
                         >
                           Editar
                         </button>
                         <button
                           type="button"
-                          className="btn-ghost"
+                          className="btn-link texto-perigo"
                           onClick={async () => void excluirAdicional(a.id)}
                         >
                           Excluir

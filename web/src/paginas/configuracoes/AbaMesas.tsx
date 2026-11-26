@@ -76,8 +76,8 @@ export default function AbaMesas() {
       <button type="submit" className="btn" disabled={salvando || carregando}>Cadastrar em lote</button>
       <p className="ajuda">Usa os próximos números disponíveis, sem repetir mesas existentes.</p>
     </Formulario>
-    {carregando ? <p role="status">Carregando mesas…</p> : mesas.length ? <div className="tabela-wrap"><table className="tabela"><thead><tr><th>Número</th><th>Situação</th><th>Ações</th></tr></thead><tbody>
-      {mesas.map((m) => <tr key={m.id}><td>Mesa {m.numero}</td><td>{!m.ativo ? "Inativa" : m.status === "OCUPADA" ? "Ocupada" : "Livre"}{m.ativo && m.status === "OCUPADA" ? <small> · Encerre ou transfira a conta para desativar.</small> : null}</td><td><div className="form-acoes">
+    {carregando ? <p role="status">Carregando mesas…</p> : mesas.length ? <div className="tabela-wrap"><table className="tabela tabela-cartoes" role="table"><thead><tr><th>Número</th><th>Situação</th><th>Ações</th></tr></thead><tbody>
+      {mesas.map((m) => <tr key={m.id}><td data-label="Mesa">{m.numero}</td><td data-label="Situação">{!m.ativo ? "Inativa" : m.status === "OCUPADA" ? "Ocupada" : "Livre"}{m.ativo && m.status === "OCUPADA" ? <small> · Encerre ou transfira a conta para desativar.</small> : null}</td><td data-label="Ações"><div className="form-acoes">
         <button type="button" className="btn" disabled={salvando} onClick={async () => { const n = (await solicitarTexto("Novo número da mesa", String(m.numero))); if (n === null) return; const valor = Number(n); if (!Number.isSafeInteger(valor) || valor < 1) return setErro("Número inválido."); void executar(`/mesas/${m.id}`, "PUT", { numero: valor }); }}>Renumerar</button>
         <button type="button" className="btn" disabled={salvando || (m.ativo && m.status === "OCUPADA")} onClick={async () => { if (!m.ativo || (await confirmar(`Desativar mesa ${m.numero}?`, true))) void executar(`/mesas/${m.id}`, m.ativo ? "DELETE" : "PUT", m.ativo ? undefined : { ativo: true }); }}>{m.ativo ? "Desativar" : "Reativar"}</button>
       </div></td></tr>)}

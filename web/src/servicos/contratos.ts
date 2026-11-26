@@ -259,7 +259,7 @@ export type KdsPedido = {
   atendimento: { id: number; codigo_atendimento: string; tipo_atendimento: string; numero_dia: number | null; mesa: { numero: number } | null };
   itens: KdsItem[];
 };
-export type KdsResposta = { estacao: "cozinha" | "bar"; atraso_min: number; agora_servidor: string; pedidos: KdsPedido[] };
+export type KdsResposta = { estacao: "cozinha" | "bar"; atraso_min: number; agora_servidor: string; pedidos: KdsPedido[]; aviso?: string };
 
 /** 409 ao abrir mesa ocupada: devolve a conta que já está aberta. */
 export type ErroMesaOcupada = { erro: string; codigo: "mesa_ocupada"; atendimento_id: number | null; codigo_atendimento: string | null };

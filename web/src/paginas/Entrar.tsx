@@ -85,8 +85,8 @@ export default function Entrar() {
       <Formulario onSubmit={enviar} noValidate aria-describedby={erro ? "entrar-erro" : undefined}>
         <div>
           <h1>Entrar</h1>
-          <p className="muted" style={{ margin: "4px 0 0" }}>
-            OS Restaurante
+          <p className="muted pequeno" style={{ margin: "6px 0 0" }}>
+            OS Restaurante · operação do dia
           </p>
         </div>
         {expirou && !erro ? (

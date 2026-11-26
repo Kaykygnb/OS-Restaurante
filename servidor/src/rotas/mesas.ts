@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../db.js";
 import { soTipos } from "../permissoes.js";
+import { liberarMesaSeSemItens } from "../operacao/liberar-mesa.js";
 
 export async function rotasMesas(app: FastifyInstance) {
   const authOps = {
@@ -12,6 +13,21 @@ export async function rotasMesas(app: FastifyInstance) {
 
   app.get("/mesas", authOps, async (req) => {
     const todas = String((req.query as any)?.todas ?? "0") === "1";
+
+    // Conta aberta sem item (clicou e saiu) não pode deixar mesa ocupada.
+    const abertosVazios = await prisma.atendimento.findMany({
+      where: {
+        status: "ABERTO",
+        tipo_atendimento: "MESA",
+        mesa_id: { not: null },
+        pedidos: { none: { itens: { some: { cancelado: false } } } },
+      },
+      select: { id: true },
+    });
+    for (const a of abertosVazios) {
+      await liberarMesaSeSemItens(prisma, a.id);
+    }
+
     const mesas = await prisma.mesa.findMany({
       ...(todas ? {} : { where: { ativo: true } }),
       orderBy: { numero: "asc" },
@@ -26,6 +42,15 @@ export async function rotasMesas(app: FastifyInstance) {
             cliente_nome: true,
             tipo_atendimento: true,
             aberto_em: true,
+            pedidos: {
+              select: {
+                itens: {
+                  where: { cancelado: false },
+                  select: { id: true },
+                  take: 1,
+                },
+              },
+            },
           },
         },
       },
@@ -33,12 +58,23 @@ export async function rotasMesas(app: FastifyInstance) {
 
     return mesas.map((m) => {
       const aberto = m.atendimentos[0] ?? null;
+      const comItens = !!aberto?.pedidos.some((p) => p.itens.length > 0);
       return {
         id: m.id,
         numero: m.numero,
         ativo: m.ativo,
-        status: aberto ? "OCUPADA" : "LIVRE",
-        atendimento_aberto: aberto,
+        // Ocupada só com item ativo.
+        status: comItens ? "OCUPADA" : "LIVRE",
+        atendimento_aberto: comItens && aberto
+          ? {
+              id: aberto.id,
+              codigo_atendimento: aberto.codigo_atendimento,
+              cliente_nome: aberto.cliente_nome,
+              tipo_atendimento: aberto.tipo_atendimento,
+              aberto_em: aberto.aberto_em,
+              com_itens: true,
+            }
+          : null,
       };
     });
   });
@@ -101,11 +137,32 @@ export async function rotasMesas(app: FastifyInstance) {
     if (!Number.isFinite(id)) return reply.code(400).send({ erro: "ID inválido" });
     const atual = await prisma.mesa.findUnique({
       where: { id },
-      include: { atendimentos: { where: { status: "ABERTO" }, take: 1 } },
+      include: {
+        atendimentos: {
+          where: { status: "ABERTO" },
+          take: 1,
+          include: {
+            pedidos: {
+              select: { itens: { where: { cancelado: false }, select: { id: true }, take: 1 } },
+            },
+          },
+        },
+      },
     });
     if (!atual) return reply.code(404).send({ erro: "Mesa não encontrada" });
-    if (atual.atendimentos.length) {
-      return reply.code(400).send({ erro: "Mesa com atendimento aberto — feche ou transfira antes" });
+    const aberto = atual.atendimentos[0];
+    if (aberto?.pedidos.some((p) => p.itens.length > 0)) {
+      return reply.code(400).send({ erro: "Mesa ocupada com itens — feche ou transfira antes" });
+    }
+    if (aberto) {
+      await prisma.atendimento.update({
+        where: { id: aberto.id },
+        data: {
+          status: "CANCELADO",
+          fechado_em: new Date(),
+          observacao: [aberto.observacao, "Cancelado: mesa desativada sem itens"].filter(Boolean).join(" | "),
+        },
+      });
     }
     return prisma.mesa.update({ where: { id }, data: { ativo: false } });
   });

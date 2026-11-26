@@ -100,7 +100,34 @@ export default function CaixaTela() {
           {gestor ? (
             <>
               <h3 style={{ margin: 0 }}>Composição do esperado</h3>
-              {previa?.composicao ? <dl className="composicao-caixa">{Object.entries({ "Fundo de troco": previa.composicao.fundo_centavos, "Recebimentos": previa.composicao.recebimentos_centavos, "Suprimentos": previa.composicao.suprimentos_centavos, "Sangrias (saída)": -previa.composicao.sangrias_centavos }).map(([nome, valor]) => <div key={nome}><dt>{nome}</dt><dd>{formatarReais(valor)}</dd></div>)}</dl> : null}
+              {previa?.composicao ? (
+                <dl className="composicao-caixa">
+                  {(
+                    [
+                      ["Fundo de troco", previa.composicao.fundo_centavos],
+                      ["Recebimentos (todas as formas)", previa.composicao.recebimentos_centavos],
+                      ["Suprimentos", previa.composicao.suprimentos_centavos],
+                      ["Sangrias (saída)", -previa.composicao.sangrias_centavos],
+                    ] as const
+                  ).map(([nome, valor]) => (
+                    <div key={nome}>
+                      <dt>{nome}</dt>
+                      <dd>{formatarReais(valor)}</dd>
+                    </div>
+                  ))}
+                  <div className="composicao-total">
+                    <dt>Total esperado</dt>
+                    <dd>
+                      {formatarReais(
+                        previa.composicao.fundo_centavos
+                          + previa.composicao.recebimentos_centavos
+                          + previa.composicao.suprimentos_centavos
+                          - previa.composicao.sangrias_centavos,
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+              ) : null}
               {previa ? (
                 <table className="tabela">
                   <tbody>
@@ -124,7 +151,7 @@ export default function CaixaTela() {
                 <p className="muted pequeno">Prévia indisponível.</p>
               )}
               <p className="muted pequeno" style={{ margin: 0 }}>
-                O operador não vê estes valores: no fechamento ele só digita o que contou.
+                Dinheiro = fundo + pagamentos em dinheiro + suprimentos − sangrias. Cartão/Pix entram só na própria linha. O operador não vê estes valores no fechamento.
               </p>
             </>
           ) : (

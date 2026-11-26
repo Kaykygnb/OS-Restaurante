@@ -120,10 +120,13 @@ export default function Cozinha() {
         <div className="est">
           <Icone nome="cozinha" tam={40} cor="var(--ink3)" />
           <strong>Nenhum pedido {estacao === "bar" ? "no bar" : "na cozinha"}</strong>
-          <span className="muted">Os pedidos novos aparecem aqui sozinhos.</span>
+          <span className="muted">
+            {dados.aviso ?? "Os pedidos novos com preparo aparecem aqui (Novos → Em preparo → Prontos)."}
+          </span>
         </div>
       ) : (
         <div className="quadro kds-quadro">
+          {dados.aviso ? <p className="muted pequeno" style={{ gridColumn: "1 / -1", margin: "0 0 4px" }}>{dados.aviso}</p> : null}
           {COLS.map((c) => (
             <section key={c.st} className="quadro-col" aria-label={c.titulo}>
               <h3>

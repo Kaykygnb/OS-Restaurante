@@ -2,16 +2,29 @@ import Formulario from "../../componentes/Formulario";
 import { useState } from "react";
 import Dialogo from "../../componentes/ui/Dialogo";
 import Icone from "../../componentes/ui/Icone";
+import { confirmar as confirmarDialogo } from "../../servicos/dialogos";
 import { formatarReais } from "../../util/dinheiro";
 import { alternarEscolha, linhaCentavos, resumoGrupo, type CarrinhoLinha } from "../pdv-regras";
 import { nomeVariante, type ProdutoPdv } from "./tipos";
 
-type Props = { produto: ProdutoPdv; inicial?: CarrinhoLinha; onAdicionar: (l: Omit<CarrinhoLinha, "key">) => void; onFechar: () => void };
+type Props = {
+  produto: ProdutoPdv;
+  inicial?: CarrinhoLinha;
+  /** Pré-seleção nos mais vendidos (tamanho já conhecido). */
+  varianteId?: number;
+  onAdicionar: (l: Omit<CarrinhoLinha, "key">) => void;
+  onFechar: () => void;
+};
 
 /** Prancha 05b: tamanho, escolhas obrigatórias, adicionais com + / −, observação e quantidade. */
-export default function OpcoesProduto({ produto, inicial, onAdicionar, onFechar }: Props) {
+export default function OpcoesProduto({ produto, inicial, varianteId, onAdicionar, onFechar }: Props) {
   const variantesOk = produto.variantes.filter((v) => !v.esgotado);
-  const [varId, setVarId] = useState(inicial?.produto_variante_id ?? variantesOk[0]?.id ?? produto.variantes[0].id);
+  const [varId, setVarId] = useState(
+    inicial?.produto_variante_id
+      ?? (varianteId && variantesOk.some((v) => v.id === varianteId) ? varianteId : undefined)
+      ?? variantesOk[0]?.id
+      ?? produto.variantes[0].id,
+  );
   const [selecao, setSelecao] = useState<Record<number, number>>(() => Object.fromEntries((inicial?.escolhas ?? []).map((e) => [e.opcao_escolha_id, e.quantidade])));
   const [adic, setAdic] = useState<Record<number, number>>(() => Object.fromEntries((inicial?.adicionais ?? []).map((a) => [a.adicional_variante_id, a.quantidade])));
   const [obs, setObs] = useState(inicial?.observacao ?? "");
@@ -36,10 +49,20 @@ export default function OpcoesProduto({ produto, inicial, onAdicionar, onFechar 
     ),
   };
 
-  function confirmar() {
+  async function confirmar() {
     if (faltando.length) {
       setAviso(`Escolha ${faltando.map((g) => `“${g.nome}”`).join(", ")} antes de adicionar.`);
       return;
+    }
+    const temExtras = linha.escolhas.length > 0 || linha.adicionais.length > 0;
+    if (qtd > 1 && temExtras) {
+      const ok = await confirmarDialogo(
+        `As ${qtd} unidades vão com as mesmas opções/adicionais. Confirma? Se for diferente, volte a quantidade para 1 e lance cada uma.`,
+      );
+      if (!ok) {
+        setQtd(1);
+        return;
+      }
     }
     onAdicionar(linha);
   }
@@ -54,7 +77,7 @@ export default function OpcoesProduto({ produto, inicial, onAdicionar, onFechar 
           <button type="button" className="btn" onClick={onFechar}>
             Desistir
           </button>
-          <button type="button" className="btn btn-pri btn-g" onClick={confirmar}>
+          <button type="button" className="btn btn-pri btn-g" onClick={() => void confirmar()}>
             {inicial ? "Salvar" : "Adicionar"} {formatarReais(linhaCentavos({ ...linha, key: "" }))}
           </button>
         </>
@@ -64,7 +87,7 @@ export default function OpcoesProduto({ produto, inicial, onAdicionar, onFechar 
         className="pilha"
         onSubmit={(e) => {
           e.preventDefault();
-          confirmar();
+          void confirmar();
         }}
       >
         {produto.variantes.length > 1 ? (

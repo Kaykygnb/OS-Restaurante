@@ -1,3 +1,4 @@
+import Dialogo from "../ui/Dialogo";
 import { temEdicaoPendente } from "../../hooks/useRascunho";
 import { confirmar } from "../../servicos/dialogos";
 import { Fragment, useEffect, useState } from "react";
@@ -52,7 +53,7 @@ export default function AppLayout() {
 
   const ativo = (to: string) => (to === "/painel" ? pathname === "/painel" : pathname === to || pathname.startsWith(to + "/"));
 
-  const grupo = (to: string) => ["/painel", "/painel/venda", "/painel/mesas", "/painel/balcao", "/painel/delivery", "/painel/pedidos", "/painel/caixa"].includes(to) ? "Atendimento" : ["/painel/usuarios", "/painel/configuracoes", "/painel/conectar", "/painel/aparelho"].includes(to) ? "Configurações" : "Gestão";
+  const grupo = (to: string) => ["/painel", "/painel/venda", "/painel/mesas", "/painel/balcao", "/painel/delivery", "/painel/comandas", "/painel/pedidos", "/painel/caixa"].includes(to) ? "Atendimento" : ["/painel/usuarios", "/painel/configuracoes", "/painel/conectar", "/painel/aparelho"].includes(to) ? "Configurações" : "Gestão";
   return (
     <div className="app">
       <aside className="lateral" aria-label="Menu">
@@ -86,7 +87,7 @@ export default function AppLayout() {
 
       <div className="principal">
         <header className="topo">
-          <div style={{ minWidth: 0 }}>
+          <div className="topo-titulo">
             <h1>{meta.titulo}</h1>
             {meta.caminho ? <p className="caminho">{meta.caminho}</p> : null}
           </div>
@@ -169,20 +170,15 @@ export default function AppLayout() {
           <span>Mais</span>
         </button>
       </nav>
-      <div className={`mais-menu${maisAberto ? " aberto" : ""}`} onClick={() => setMaisAbertoEm(null)}>
-        <div className="sheet-corpo" role="menu" onClick={(e) => e.stopPropagation()}>
-          {mais.map((i) => (
-            <NavLink key={i.to} to={i.to} className={() => `nav-link${ativo(i.to) ? " ativo" : ""}`} role="menuitem">
-              <Icone nome={i.icone} />
-              <span>{i.rotulo}</span>
-            </NavLink>
-          ))}
-          <button type="button" className="nav-link btn-link" style={{ border: 0, background: "none", font: "inherit", textAlign: "left" }} onClick={trocarUsuario}>
-            <Icone nome="sair" />
-            <span>Trocar usuário ({usuario?.nome})</span>
-          </button>
-        </div>
-      </div>
+      {maisAberto ? <Dialogo titulo="Navegação" sub="Atendimento, gestão e configurações" onFechar={() => setMaisAbertoEm(null)}>
+        <nav className="menu-celular" aria-label="Todas as telas">
+          {mais.map((i, indice) => <Fragment key={i.to}>
+            {(indice === 0 || grupo(mais[indice - 1].to) !== grupo(i.to)) ? <h3>{grupo(i.to)}</h3> : null}
+            <NavLink to={i.to} className={() => `nav-link${ativo(i.to) ? " ativo" : ""}`} onClick={() => setMaisAbertoEm(null)}><Icone nome={i.icone}/><span>{i.rotulo}</span></NavLink>
+          </Fragment>)}
+          <button type="button" className="nav-link" onClick={trocarUsuario}><Icone nome="sair"/><span>Trocar usuário ({usuario?.nome})</span></button>
+        </nav>
+      </Dialogo> : null}
     </div>
   );
 }

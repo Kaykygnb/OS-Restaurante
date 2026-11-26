@@ -14,8 +14,16 @@ type Mesa = {
   numero: number;
   ativo: boolean;
   status: string;
-  atendimento_aberto: { id: number; codigo_atendimento: string; cliente_nome: string | null; aberto_em: string; total_centavos?: number | null } | null;
+  atendimento_aberto: {
+    id: number;
+    codigo_atendimento: string;
+    cliente_nome: string | null;
+    aberto_em: string;
+    total_centavos?: number | null;
+    com_itens?: boolean;
+  } | null;
 };
+const estaOcupada = (m: Mesa) => m.status === "OCUPADA";
 type Item = { id: number; nome_produto: string; quantidade: number; preco_centavos: number; cancelado: boolean; total_centavos?: number; escolhas?: { preco_extra_centavos: number; quantidade: number }[]; adicionais?: { nome_adicional: string; preco_centavos: number; quantidade: number }[] };
 type Detalhe = {
   id: number;
@@ -61,7 +69,13 @@ export default function MapaMesas() {
   const [pin, setPin] = useState("");
   const [erroModal, setErroModal] = useState("");
   const pedido = useRef(0);
-  const cel = typeof window !== "undefined" && window.matchMedia?.("(max-width: 699px)").matches;
+  const [cel, setCel] = useState(() => window.matchMedia("(max-width: 699px)").matches);
+  useEffect(() => {
+    const consulta = window.matchMedia("(max-width: 699px)");
+    const atualizar = (e: MediaQueryListEvent) => setCel(e.matches);
+    consulta.addEventListener("change", atualizar);
+    return () => consulta.removeEventListener("change", atualizar);
+  }, []);
 
   const carregar = useCallback(() => {
     api("/mesas")
@@ -88,17 +102,18 @@ export default function MapaMesas() {
   const lista = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return (mesas ?? []).filter((m) => {
-      if (filtro === "ocupadas" && !m.atendimento_aberto) return false;
-      if (filtro === "livres" && m.atendimento_aberto) return false;
+      if (filtro === "ocupadas" && !estaOcupada(m)) return false;
+      if (filtro === "livres" && estaOcupada(m)) return false;
       if (!q) return true;
       return String(m.numero) === q.replace(/\D/g, "") || (m.atendimento_aberto?.cliente_nome ?? "").toLowerCase().includes(q);
     });
   }, [mesas, filtro, busca]);
-  const ocupadas = (mesas ?? []).filter((m) => m.atendimento_aberto);
-  const livres = (mesas ?? []).filter((m) => !m.atendimento_aberto);
+  const ocupadas = (mesas ?? []).filter(estaOcupada);
+  // Destino de transferência: sem conta aberta (mesmo vazia), senão o índice único bloqueia.
+  const livresTransferir = (mesas ?? []).filter((m) => !m.atendimento_aberto);
 
   async function tocar(m: Mesa) {
-    if (m.atendimento_aberto) {
+    if (estaOcupada(m) && m.atendimento_aberto) {
       setSel(m.id);
       setDet(null);
       abrirDetalhe(m.atendimento_aberto.id);
@@ -108,13 +123,13 @@ export default function MapaMesas() {
     if (ocupado) return;
     setOcupado(true);
     try {
+      // Conta só “ocupa” a mesa depois do 1º item; ao voltar sem itens o GET /mesas libera.
       const at = (await api("/atendimentos", { method: "POST", body: JSON.stringify({ tipo_atendimento: "MESA", mesa_id: m.id }) })) as { id: number };
       avisar(`Mesa ${m.numero} aberta. Lance os itens.`, "ok");
       navegar(`/painel/pdv/${at.id}`);
     } catch (e) {
       const err = e as ApiErro;
       if (err.codigo === "mesa_ocupada" && err.dados?.atendimento_id) {
-        // Outra pessoa abriu esta mesa ao mesmo tempo: não criar segunda conta, oferecer a que já existe.
         setMesaOcupada({ numero: m.numero, mesaId: m.id, atendimentoId: Number(err.dados.atendimento_id), codigo: String(err.dados.codigo_atendimento ?? "") });
       } else {
         avisar(err.message, "err");
@@ -188,7 +203,7 @@ export default function MapaMesas() {
     <div className="pilha" data-testid="painel-conta">
       <div>
         <div className="entre">
-          <h2 style={{ margin: 0, fontSize: 19 }}>Mesa {det.mesa?.numero ?? mesaSel?.numero}</h2>
+          <h2 className="mesa-titulo">Mesa {det.mesa?.numero ?? mesaSel?.numero}</h2>
           <span className="tag tag-info">{det.codigo_atendimento}</span>
         </div>
         <span className="muted pequeno">
@@ -196,7 +211,7 @@ export default function MapaMesas() {
           {det.usuario?.nome ? ` por ${det.usuario.nome}` : ""}
         </span>
       </div>
-      <div className="pilha" style={{ gap: 6, maxHeight: 280, overflowY: "auto" }}>
+      <div className="pilha gap-6 scroll-lista">
         {det.pedidos.flatMap((p) => p.itens).filter((i) => !i.cancelado).length === 0 ? (
           <p className="muted">Nenhum item lançado ainda.</p>
         ) : (
@@ -215,7 +230,7 @@ export default function MapaMesas() {
         )}
       </div>
       {det.totais ? (
-        <div className="pilha" style={{ gap: 4, borderTop: "1px solid var(--line2)", paddingTop: 8 }}>
+        <div className="pilha gap-6 borda-topo">
           <div className="entre muted pequeno">
             <span>Subtotal</span>
             <span className="num">{formatarReais(det.totais.subtotal_centavos)}</span>
@@ -227,12 +242,12 @@ export default function MapaMesas() {
             </div>
           ) : null}
           {det.totais.pago_centavos ? (
-            <div className="entre pequeno" style={{ color: "var(--ok)" }}>
+            <div className="entre pequeno texto-ok">
               <span>Já pago</span>
               <span className="num">{formatarReais(det.totais.pago_centavos)}</span>
             </div>
           ) : null}
-          <div className="entre" style={{ fontSize: 18, fontWeight: 700 }}>
+          <div className="entre totais-finais">
             <span>Total</span>
             <span className="num">{formatarReais(det.totais.total_centavos)}</span>
           </div>
@@ -243,11 +258,11 @@ export default function MapaMesas() {
           Receber conta
         </button>
       ) : (
-        <p className="onde-fica" style={{ margin: 0 }}>
+        <p className="onde-fica mb-0">
           Para receber, imprima a pré-conta e chame quem está no caixa.
         </p>
       )}
-      <div className="grade-2" style={{ gap: 8 }}>
+      <div className="grade-2 gap-8">
         <button type="button" className="btn" onClick={() => navegar(`/painel/pdv/${det.id}`)}>
           Lançar itens
         </button>
@@ -261,7 +276,7 @@ export default function MapaMesas() {
           Juntar mesas
         </button>
       </div>
-      <button type="button" className="btn btn-link" style={{ color: "var(--err)" }} onClick={() => (setMotivo(""), setErroModal(""), setModal("cancelar"))}>
+      <button type="button" className="btn btn-link texto-perigo" onClick={() => (setMotivo(""), setErroModal(""), setModal("cancelar"))}>
         Cancelar conta {gestao ? "" : "(pede PIN do gerente)"}
       </button>
     </div>
@@ -269,7 +284,7 @@ export default function MapaMesas() {
     <Carregando linhas={3} rotulo="Carregando a conta" />
   ) : (
     <Vazio icone="mesas" titulo="Toque numa mesa">
-      Mesa ocupada mostra a conta aqui. Mesa livre abre na hora.
+      Ocupada = tem item. Livre abre o PDV para lançar.
     </Vazio>
   );
 
@@ -285,7 +300,7 @@ export default function MapaMesas() {
               Ocupadas ({ocupadas.length})
             </button>
             <button type="button" aria-pressed={filtro === "livres"} onClick={() => setFiltro("livres")}>
-              Livres ({livres.length})
+              Livres ({mesas.length - ocupadas.length})
             </button>
           </div>
           <label className="venda-busca acoes" style={{ minWidth: 220, minHeight: 44 }}>
@@ -301,19 +316,20 @@ export default function MapaMesas() {
           <div className="mesas-grade">
             {lista.map((m) => {
               const at = m.atendimento_aberto;
+              const ocup = estaOcupada(m);
               return (
                 <button
                   key={m.id}
                   type="button"
-                  className={`mesa${at ? " ocupada" : ""}${m.id === sel ? " sel" : ""}`}
+                  className={`mesa${ocup ? " ocupada" : ""}${m.id === sel ? " sel" : ""}`}
                   onClick={() => tocar(m)}
                   disabled={ocupado && !at}
-                  aria-label={`Mesa ${m.numero}, ${at ? `ocupada há ${tempo(minutos(at.aberto_em))}` : "livre, tocar para abrir"}`}
+                  aria-label={`Mesa ${m.numero}, ${ocup ? `ocupada há ${tempo(minutos(at!.aberto_em))}` : "livre, tocar para abrir"}`}
                 >
                   <strong>Mesa {m.numero}</strong>
-                  {at?.total_centavos != null ? <span className="mesa-valor">{formatarReais(at.total_centavos)}</span> : null}
-                  {at?.cliente_nome ? <span className="pequeno">{at.cliente_nome}</span> : null}
-                  <span className="mesa-estado">{at ? `Ocupada · ${tempo(minutos(at.aberto_em))}` : "Livre · tocar para abrir"}</span>
+                  {ocup && at?.total_centavos != null ? <span className="mesa-valor">{formatarReais(at.total_centavos)}</span> : null}
+                  {ocup && at?.cliente_nome ? <span className="pequeno">{at.cliente_nome}</span> : null}
+                  <span className="mesa-estado">{ocup ? `Ocupada · ${tempo(minutos(at!.aberto_em))}` : "Livre · tocar para abrir"}</span>
                 </button>
               );
             })}
@@ -376,7 +392,7 @@ export default function MapaMesas() {
               <span>Mesa livre de destino</span>
               <select value={alvo} onChange={(e) => setAlvo(e.target.value)} data-foco>
                 <option value="">Escolha…</option>
-                {livres.map((m) => (
+                {livresTransferir.map((m) => (
                   <option key={m.id} value={m.id}>
                     Mesa {m.numero}
                   </option>

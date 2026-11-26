@@ -1,7 +1,7 @@
 import { lerRascunhoSeguro, podeTrocarEdicao, useEdicaoPendente, useProtecaoSensivel } from "../hooks/useRascunho";
 import Formulario from "../componentes/Formulario";
 import { confirmar } from "../servicos/dialogos";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
 import { lerUsuario } from "../auth/sessao";
@@ -144,8 +144,14 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
 
+  const editorRef = useRef<HTMLElement>(null);
   const [modo, setModo] = useState<"criar" | "editar" | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
+  useEffect(() => {
+    if (!modo || !window.matchMedia("(max-width: 699px)").matches) return;
+    const frame = requestAnimationFrame(() => editorRef.current?.scrollIntoView({ block: "start" }));
+    return () => cancelAnimationFrame(frame);
+  }, [modo, editId]);
   const [nome, setNome] = useState("");
   const [login, setLogin] = useState("");
   const [tipo, setTipo] = useState<TipoUsuario | "">("");
@@ -397,7 +403,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
             </button>
           </header>
 
-          <div className="abas" style={{ marginBottom: 14 }}>
+          <div className="abas mb-14">
             <button
               type="button"
               className={`aba${filtro === "1" ? " on" : ""}`}
@@ -474,7 +480,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
         </section>
 
         {painelAberto ? (
-          <aside className="painel-bloco painel-drawer">
+          <aside ref={editorRef} className="painel-bloco painel-drawer">
             <Formulario className="form-drawer" onSubmit={salvarDados}>
               {erro ? <p className="feedback-card feedback-erro" role="alert">{erro}</p> : null}
               <div className="form-produto-titulo">

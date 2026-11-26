@@ -6,7 +6,7 @@ export function Carregando({ linhas = 4, rotulo = "Carregando…" }: { linhas?: 
   return (
     <div className="pilha" role="status" aria-label={rotulo}>
       {Array.from({ length: linhas }, (_, i) => (
-        <div key={i} className="esqueleto" style={{ height: 56 }} />
+        <div key={i} className="esqueleto" />
       ))}
     </div>
   );

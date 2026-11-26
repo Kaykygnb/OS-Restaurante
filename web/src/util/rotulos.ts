@@ -5,6 +5,7 @@ const TIPO_ATENDIMENTO: Record<string, string> = {
   BALCAO: "Balcão",
   RETIRADA: "Retirada",
   ENTREGA: "Entrega",
+  VENDA_RAPIDA: "Venda rápida",
 };
 
 const STATUS_ATENDIMENTO: Record<string, string> = {

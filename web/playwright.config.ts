@@ -24,8 +24,8 @@ export default defineConfig({
     launchOptions: chrome ? { executablePath: chrome } : {},
   },
   projects: [
-    { name: "tablet", use: { viewport: { width: 820, height: 1180 }, hasTouch: true } },
-    { name: "desktop", use: { viewport: { width: 1366, height: 768 } } },
+    { name: "tablet", testIgnore: "**/mobile.spec.ts", use: { viewport: { width: 820, height: 1180 }, hasTouch: true } },
+    { name: "desktop", testIgnore: "**/mobile.spec.ts", use: { viewport: { width: 1366, height: 768 } } },
     {
       name: "celular",
       use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 3 },
