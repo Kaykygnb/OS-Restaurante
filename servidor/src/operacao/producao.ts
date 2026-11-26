@@ -18,7 +18,12 @@ export type ItemRoteavel = {
   escolhas: { nome_opcao: string; quantidade: number }[];
   adicionais: { nome_adicional: string; quantidade: number }[];
   produto_variante: {
-    produto: { exige_preparo: boolean; categoria_id: number; nao_imprime?: boolean };
+    produto: {
+      exige_preparo: boolean;
+      categoria_id: number;
+      nao_imprime?: boolean;
+      categoria?: { nome: string } | null;
+    };
   };
 };
 
@@ -29,17 +34,25 @@ export type ResultadoImpressao = {
 };
 
 function mapItensCupom(itens: ItemRoteavel[]) {
-  return itens.map((i) => ({
-    quantidade: i.quantidade,
-    nome: i.nome_produto,
-    observacao: i.observacao,
-    escolhas: i.escolhas.map((e) =>
-      e.quantidade > 1 ? `${e.quantidade}x ${e.nome_opcao}` : e.nome_opcao
-    ),
-    adicionais: i.adicionais.map((a) =>
-      a.quantidade > 1 ? `${a.quantidade}x ${a.nome_adicional}` : a.nome_adicional
-    ),
-  }));
+  return itens.map((i) => {
+    const linha: {
+      quantidade: number;
+      nome: string;
+      observacao: string | null;
+      escolhas: string[];
+      adicionais: string[];
+      categoria?: string;
+    } = {
+      quantidade: i.quantidade,
+      nome: i.nome_produto,
+      observacao: i.observacao,
+      escolhas: i.escolhas.map((e) => (e.quantidade > 1 ? `${e.quantidade}x ${e.nome_opcao}` : e.nome_opcao)),
+      adicionais: i.adicionais.map((a) => (a.quantidade > 1 ? `${a.quantidade}x ${a.nome_adicional}` : a.nome_adicional)),
+    };
+    const categoria = i.produto_variante.produto.categoria?.nome;
+    if (categoria) linha.categoria = categoria;
+    return linha;
+  });
 }
 
 async function enfileirarVias(opts: {
@@ -175,7 +188,14 @@ export async function enfileirarProducaoPedido(opts: {
       hora_original: opts.hora_original ?? origemJob?.criado_em ?? null,
       tamanho_letra: impressora.tamanho_letra_producao,
       apita: impressora.apita,
-      itens: mapItensCupom(itens),
+      itens: mapItensCupom(
+        [...itens].sort((a, b) =>
+          (a.produto_variante.produto.categoria?.nome ?? "").localeCompare(
+            b.produto_variante.produto.categoria?.nome ?? "",
+            "pt-BR"
+          )
+        )
+      ),
     });
 
     const ids = await enfileirarVias({
