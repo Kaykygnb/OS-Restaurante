@@ -63,8 +63,9 @@ function novaLinhaOpcao(nome = ""): LinhaOpcaoNova {
 
 export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, onMudou }: Props) {
   const comId = variantes.filter((v) => v.id);
-  const idsKey = comId.map((v) => v.id).join(",");
-  const [varianteId, setVarianteId] = useState<number | null>(comId[0]?.id ?? null);
+  const [varianteEscolhida, setVarianteId] = useState<number | null>(comId[0]?.id ?? null);
+  // Variante válida derivada (se a escolhida sumiu, usa a primeira) — sem setState em efeito.
+  const varianteId = comId.some((v) => v.id === varianteEscolhida) ? varianteEscolhida : (comId[0]?.id ?? null);
   const [grupos, setGrupos] = useState<GrupoEscolhas[]>([]);
   const [carregando, setCarregando] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -89,17 +90,8 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
   const [editPrecoOpcao, setEditPrecoOpcao] = useState("0");
 
   useEffect(() => {
-    const lista = variantes.filter((v) => v.id);
-    if (!lista.some((v) => v.id === varianteId)) {
-      setVarianteId(lista[0]?.id ?? null);
-    }
-  }, [idsKey, varianteId, variantes]);
-
-  useEffect(() => {
-    if (!varianteId) {
-      setGrupos([]);
-      return;
-    }
+    // Sem variante com id a tela mostra outro estado (comId vazio), então não precisa limpar grupos.
+    if (!varianteId) return;
     let cancelado = false;
     (async () => {
       setCarregando(true);
