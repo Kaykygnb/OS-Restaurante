@@ -1,4 +1,15 @@
-export type ApiErro = Error & { status?: number; dados?: Record<string, unknown>; semConexao?: boolean };
+import { lerNomeAparelho, nomeParaCabecalho } from "../util/terminal";
+
+export type ApiErro = Error & {
+  status?: number;
+  /** Código estável do servidor (CONTRATOS.md: a tela decide pelo código, nunca pelo texto). */
+  codigo?: string;
+  dados?: Record<string, unknown>;
+  semConexao?: boolean;
+};
+
+/** Liga o mock de desenvolvimento (VITE_MOCK=1). Fora disso, o mock nem é baixado. */
+export const MOCK_LIGADO = import.meta.env.VITE_MOCK === "1";
 
 export type OpcoesApi = RequestInit & {
   /** Tempo máximo em ms (padrão 15 s). */
@@ -44,6 +55,12 @@ export function registrarAoExpirarSessao(fn: (() => void) | null) {
 export async function api(caminho: string, opcoes: OpcoesApi = {}) {
   const { tempoLimiteMs = 15000, chaveIdempotencia, ...init } = opcoes;
   const token = localStorage.getItem("token");
+  const terminal = nomeParaCabecalho(lerNomeAparelho());
+  if (MOCK_LIGADO) {
+    const { responderMock } = await import("./mock");
+    const r = await responderMock(caminho, init, { token, terminal, chaveIdempotencia });
+    return tratarResposta(r.status, r.corpo, caminho, token);
+  }
   const controle = new AbortController();
   let estourou = false;
   const timer = setTimeout(() => {
@@ -64,6 +81,7 @@ export async function api(caminho: string, opcoes: OpcoesApi = {}) {
         ...(init.body ? { "Content-Type": "application/json" } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(chaveIdempotencia ? { "Idempotency-Key": chaveIdempotencia } : {}),
+        ...(terminal ? { "X-Terminal": terminal } : {}),
         ...init.headers,
       },
     });
@@ -81,18 +99,28 @@ export async function api(caminho: string, opcoes: OpcoesApi = {}) {
   }
 
   const dados = await resposta.json().catch(() => ({}));
-  if (!resposta.ok) {
-    if (resposta.status === 401 && caminho !== "/login" && token) {
+  return tratarResposta(resposta.status, dados, caminho, token);
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function tratarResposta(status: number, dados: any, caminho: string, token: string | null) {
+  if (status >= 400) {
+    if (status === 401 && !caminho.startsWith("/auth/login") && caminho !== "/login" && token) {
       aoExpirarSessao?.();
     }
     const msg =
-      (dados as { erro?: string }).erro ||
-      (resposta.status === 401
+      ((dados as { codigo?: string })?.codigo === "sem_permissao_caixa" ? "Só quem opera o caixa pode fazer isso." : "") ||
+      (dados as { erro?: string })?.erro ||
+      (status === 401
         ? "Sua sessão expirou. Entre de novo."
-        : resposta.status === 403
+        : status === 403
           ? "Seu perfil não tem permissão para isso."
           : "Erro no servidor");
-    throw criarErro(msg, { status: resposta.status, dados: dados as Record<string, unknown> });
+    throw criarErro(msg, {
+      status,
+      codigo: (dados as { codigo?: string })?.codigo,
+      dados: dados as Record<string, unknown>,
+    });
   }
   return dados;
 }
