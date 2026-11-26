@@ -43,10 +43,11 @@ export async function recuperarTrabalhosPresos() {
   }
 }
 
-async function processarUm() {
+async function processarUm(impressoraId?: number) {
   const agora = new Date();
   const trabalho = await prisma.trabalho_impressao.findFirst({
     where: {
+      ...(impressoraId ? { impressora_id: impressoraId } : {}),
       status: { in: ["PENDENTE", "ERRO"] },
       tentativas: { lt: MAX_TENTATIVAS },
       OR: [{ proxima_tentativa_em: null }, { proxima_tentativa_em: { lte: agora } }],
@@ -130,9 +131,12 @@ async function tick() {
   if (rodando) return;
   rodando = true;
   try {
-    for (let i = 0; i < 3; i++) {
-      const houve = await processarUm();
-      if (!houve) break;
+    const impressoras = await prisma.impressora.findMany({
+      where: { ativo: true },
+      select: { id: true },
+    });
+    for (const impressora of impressoras) {
+      await processarUm(impressora.id);
     }
   } catch (err) {
     console.error("[fila-impressao]", err);

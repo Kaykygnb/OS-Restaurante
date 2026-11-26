@@ -60,7 +60,7 @@ export async function linhasFechamentoCaixa(sessaoId: number) {
     linhas.push({ texto: "Contado", valor_centavos: sessao.valor_informado_centavos });
   }
   if (sessao.diferenca_centavos != null) {
-    linhas.push({ texto: "Diferenca", valor_centavos: sessao.diferenca_centavos });
+    linhas.push({ texto: "Diferença", valor_centavos: sessao.diferenca_centavos });
   }
   return linhas;
 }
