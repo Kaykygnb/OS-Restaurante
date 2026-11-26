@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
+import Avisos from "../componentes/Avisos";
+import { lerUsuario } from "../auth/sessao";
+import { useAviso } from "../hooks/useAviso";
 import { api } from "../servicos/api";
+import { rotuloStatusPedido as rotuloStatus, rotuloTipo } from "../util/rotulos";
 
 type Aba = "lancar" | "cozinha" | "historico";
 type TipoAtendimento = "BALCAO" | "RETIRADA" | "ENTREGA" | "MESA";
@@ -56,38 +60,28 @@ function minutosDesde(iso: string) {
   return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
 }
 
-function rotuloStatus(s: string) {
-  const map: Record<string, string> = {
-    ENVIADO: "Na fila",
-    PREPARO: "Em preparo",
-    PRONTO: "Pronto",
-    ENTREGUE: "Entregue",
-    CANCELADO: "Cancelado",
-  };
-  return map[s] ?? s;
-}
-
-function rotuloTipo(t: string) {
-  const map: Record<string, string> = {
-    MESA: "Mesa",
-    BALCAO: "Balcão",
-    RETIRADA: "Retirada",
-    ENTREGA: "Entrega",
-  };
-  return map[t] ?? t;
-}
-
 export default function Pedidos() {
   const navegar = useNavigate();
-  const [aba, setAba] = useState<Aba>("lancar");
+  const [params, setParams] = useSearchParams();
+  const ehCozinha = lerUsuario()?.tipo === "COZINHEIRO";
+  const abaUrl = params.get("aba");
+  // A cozinha abre direto na fila; o cozinheiro nem vê "Lançar" (o servidor não deixa ele abrir conta).
+  const aba: Aba = ehCozinha
+    ? abaUrl === "historico"
+      ? "historico"
+      : "cozinha"
+    : abaUrl === "cozinha" || abaUrl === "historico"
+      ? abaUrl
+      : "lancar";
+  const setAba = (a: Aba) => setParams(a === "lancar" ? {} : { aba: a }, { replace: true });
+  const [avancando, setAvancando] = useState<Set<number>>(new Set());
   const [lista, setLista] = useState<PedidoKds[]>([]);
   const [historico, setHistorico] = useState<PedidoKds[]>([]);
   const [contas, setContas] = useState<ContaAberta[]>([]);
   const [mesasLivres, setMesasLivres] = useState<MesaOpt[]>([]);
-  const [erro, setErro] = useState("");
-  const [ok, setOk] = useState("");
+  const { erro, ok, setErro, setOk } = useAviso();
   const [carregando, setCarregando] = useState(true);
-  const [agora, setAgora] = useState(Date.now());
+  const [agora, setAgora] = useState(() => Date.now());
 
   const [tipoNovo, setTipoNovo] = useState<TipoAtendimento>("BALCAO");
   const [mesaId, setMesaId] = useState("");
@@ -107,7 +101,7 @@ export default function Pedidos() {
     } finally {
       setCarregando(false);
     }
-  }, []);
+  }, [setErro]);
 
   const carregarHistorico = useCallback(async () => {
     setCarregando(true);
@@ -119,7 +113,7 @@ export default function Pedidos() {
     } finally {
       setCarregando(false);
     }
-  }, []);
+  }, [setErro]);
 
   const carregarContas = useCallback(async () => {
     setCarregando(true);
@@ -136,10 +130,11 @@ export default function Pedidos() {
     } finally {
       setCarregando(false);
     }
-  }, []);
+  }, [setErro]);
 
   useEffect(() => {
     if (aba === "cozinha") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- carga de dados da tela (fetch)
       void carregarCozinha();
       const t = setInterval(() => void carregarCozinha(true), 6000);
       const clock = setInterval(() => setAgora(Date.now()), 30000);
@@ -154,17 +149,24 @@ export default function Pedidos() {
 
   async function avancar(p: PedidoKds) {
     const prox = PROXIMO[p.status];
-    if (!prox) return;
+    if (!prox || avancando.has(p.id)) return; // trava contra toque duplo
+    setAvancando((s) => new Set(s).add(p.id));
     setErro("");
     try {
       await api(`/pedidos/${p.id}/status`, {
         method: "PUT",
         body: JSON.stringify({ status: prox.status }),
       });
-      setOk(`${p.codigo_pedido} → ${prox.status}`);
+      setOk(`${p.codigo_pedido}: ${rotuloStatus(prox.status).toLowerCase()}`);
       await carregarCozinha(true);
     } catch (e) {
       setErro((e as Error).message);
+    } finally {
+      setAvancando((s) => {
+        const n = new Set(s);
+        n.delete(p.id);
+        return n;
+      });
     }
   }
 
@@ -232,15 +234,31 @@ export default function Pedidos() {
         </button>
       </section>
 
-      <div className="abas">
-        <button type="button" className={`aba${aba === "lancar" ? " on" : ""}`} onClick={() => setAba("lancar")}>
-          Lançar
-        </button>
-        <button type="button" className={`aba${aba === "cozinha" ? " on" : ""}`} onClick={() => setAba("cozinha")}>
+      <div className="abas" role="tablist" aria-label="Pedidos">
+        {!ehCozinha ? (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={aba === "lancar"}
+            className={`aba${aba === "lancar" ? " on" : ""}`}
+            onClick={() => setAba("lancar")}
+          >
+            Lançar
+          </button>
+        ) : null}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={aba === "cozinha"}
+          className={`aba${aba === "cozinha" ? " on" : ""}`}
+          onClick={() => setAba("cozinha")}
+        >
           Cozinha
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={aba === "historico"}
           className={`aba${aba === "historico" ? " on" : ""}`}
           onClick={() => setAba("historico")}
         >
@@ -248,8 +266,7 @@ export default function Pedidos() {
         </button>
       </div>
 
-      {erro ? <p className="feedback-card feedback-erro">{erro}</p> : null}
-      {ok ? <p className="feedback-card feedback-ok">{ok}</p> : null}
+      <Avisos erro={erro} ok={ok} />
 
       {aba === "lancar" ? (
         <div className="lancar-layout">
@@ -497,8 +514,13 @@ export default function Pedidos() {
                             ))}
                           </ul>
                           {PROXIMO[p.status] ? (
-                            <button type="button" className="kds-btn" onClick={() => void avancar(p)}>
-                              {PROXIMO[p.status]!.label}
+                            <button
+                              type="button"
+                              className="kds-btn"
+                              disabled={avancando.has(p.id)}
+                              onClick={() => void avancar(p)}
+                            >
+                              {avancando.has(p.id) ? "…" : PROXIMO[p.status]!.label}
                             </button>
                           ) : null}
                         </li>

@@ -1,19 +1,18 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { lerUsuario, sair } from "../../auth/sessao";
+import { lerUsuario, PERFIS_GESTAO, PERFIS_OPERACAO, sair } from "../../auth/sessao";
+import { rotuloPerfil } from "../../util/rotulos";
 
-const ITENS = [
-  { to: "/painel", rotulo: "Início", ico: "IN", sempre: true },
-  { to: "/painel/cardapio", rotulo: "Cardápio", ico: "CA", sempre: true },
-  { to: "/painel/pedidos", rotulo: "Pedidos", ico: "PE", sempre: true },
-  { to: "/painel/mesas", rotulo: "Mesas", ico: "ME", sempre: true },
-  { to: "/painel/caixa", rotulo: "Caixa", ico: "CX", sempre: true },
-  { to: "/painel/usuarios", rotulo: "Usuários", ico: "US", gestao: true },
-  { to: "/painel/configuracoes", rotulo: "Configurações", ico: "CF", config: true },
-] as const;
-
-const TIPOS_GESTAO = new Set(["ROOT", "ADMIN", "GERENTE"]);
-const TIPOS_CONFIG = new Set(["ROOT", "ADMIN"]);
+/** Quem vê cada item do menu (igual às permissões do servidor, para ninguém cair em "Sem permissão"). */
+const ITENS: { to: string; rotulo: string; ico: string; perfis?: string[] }[] = [
+  { to: "/painel", rotulo: "Início", ico: "IN" },
+  { to: "/painel/mesas", rotulo: "Mesas", ico: "ME", perfis: PERFIS_OPERACAO },
+  { to: "/painel/pedidos", rotulo: "Pedidos", ico: "PE", perfis: [...PERFIS_OPERACAO, "COZINHEIRO"] },
+  { to: "/painel/caixa", rotulo: "Caixa", ico: "CX", perfis: PERFIS_OPERACAO },
+  { to: "/painel/cardapio", rotulo: "Cardápio", ico: "CA" },
+  { to: "/painel/usuarios", rotulo: "Usuários", ico: "US", perfis: PERFIS_GESTAO },
+  { to: "/painel/configuracoes", rotulo: "Configurações", ico: "CF", perfis: ["ROOT", "ADMIN"] },
+];
 
 const TITULOS: Record<string, { titulo: string; sub: string }> = {
   "/painel": { titulo: "Início", sub: "Resumo do dia e atalhos rápidos" },
@@ -23,23 +22,31 @@ const TITULOS: Record<string, { titulo: string; sub: string }> = {
   "/painel/caixa": { titulo: "Caixa", sub: "Sessão, sangria e fechamento" },
   "/painel/usuarios": { titulo: "Usuários", sub: "Equipe e permissões" },
   "/painel/configuracoes": { titulo: "Configurações", sub: "Estabelecimento e impressoras" },
+  "/painel/pdv": { titulo: "Lançar itens", sub: "Monte o pedido e envie" },
+  "/painel/conta": { titulo: "Conta", sub: "Receber e fechar" },
 };
+
+function metaDaRota(pathname: string) {
+  if (TITULOS[pathname]) return TITULOS[pathname];
+  const base = Object.keys(TITULOS)
+    .filter((k) => k !== "/painel" && pathname.startsWith(k + "/"))
+    .sort((a, b) => b.length - a.length)[0];
+  return base ? TITULOS[base] : { titulo: "Painel", sub: "" };
+}
 
 export default function Shell() {
   const [colapsado, setColapsado] = useState(() => localStorage.getItem("menu_colapsado") === "1");
-  const [menuAberto, setMenuAberto] = useState(false);
+  // O menu do celular fecha sozinho ao trocar de tela: ele fica "aberto" só na rota em que foi aberto.
+  const [menuAbertoEm, setMenuAbertoEm] = useState<string | null>(null);
   const usuario = lerUsuario();
   const navegar = useNavigate();
   const { pathname } = useLocation();
-  const meta = TITULOS[pathname] ?? { titulo: "Painel", sub: "" };
+  const meta = metaDaRota(pathname);
 
   useEffect(() => {
     localStorage.setItem("menu_colapsado", colapsado ? "1" : "0");
   }, [colapsado]);
 
-  useEffect(() => {
-    setMenuAberto(false);
-  }, [pathname]);
 
   function deslogar() {
     sair();
@@ -48,6 +55,7 @@ export default function Shell() {
 
   const classes = ["shell"];
   if (colapsado) classes.push("collapsed");
+  const menuAberto = menuAbertoEm === pathname;
   if (menuAberto) classes.push("menu-aberto");
 
   return (
@@ -62,11 +70,7 @@ export default function Shell() {
         </div>
 
         <nav className="sidebar-nav">
-          {ITENS.filter((item) => {
-            if ("gestao" in item && item.gestao) return TIPOS_GESTAO.has(usuario?.tipo ?? "");
-            if ("config" in item && item.config) return TIPOS_CONFIG.has(usuario?.tipo ?? "");
-            return true;
-          }).map((item) => (
+          {ITENS.filter((item) => !item.perfis || item.perfis.includes(usuario?.tipo ?? "")).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -87,7 +91,7 @@ export default function Shell() {
             <span className="user-dot" aria-hidden />
             <span>
               {usuario?.nome ?? "—"}
-              {usuario?.tipo ? ` · ${usuario.tipo}` : ""}
+              {usuario?.tipo ? ` · ${rotuloPerfil(usuario.tipo)}` : ""}
             </span>
           </div>
 
@@ -103,7 +107,7 @@ export default function Shell() {
             <span className="nav-label">{colapsado ? "Expandir" : "Recolher"}</span>
           </button>
 
-          <button type="button" className="btn-sair" onClick={deslogar} title="Sair">
+          <button type="button" className="btn-sair" onClick={deslogar} title="Sair" aria-label="Sair">
             <span className="nav-ico" aria-hidden>
               SA
             </span>
@@ -117,7 +121,7 @@ export default function Shell() {
           type="button"
           className="sidebar-backdrop"
           aria-label="Fechar menu"
-          onClick={() => setMenuAberto(false)}
+          onClick={() => setMenuAbertoEm(null)}
         />
       ) : null}
 
@@ -127,7 +131,7 @@ export default function Shell() {
             <button
               type="button"
               className="btn-menu-mobile"
-              onClick={() => setMenuAberto((v) => !v)}
+              onClick={() => setMenuAbertoEm(menuAberto ? null : pathname)}
               aria-label="Abrir menu"
             >
               Menu
@@ -137,7 +141,7 @@ export default function Shell() {
               {meta.sub ? <p>{meta.sub}</p> : null}
             </div>
           </div>
-          {usuario?.tipo ? <span className="badge-tipo">{usuario.tipo}</span> : null}
+          {usuario?.tipo ? <span className="badge-tipo">{rotuloPerfil(usuario.tipo)}</span> : null}
         </header>
 
         <main className="conteudo">
