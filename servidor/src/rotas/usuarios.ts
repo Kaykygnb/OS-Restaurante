@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "../db.js";
 import {
   ehTipoUsuario,
+  padraoPodeOperarCaixa,
   podeCriarTipo,
   soTipos,
   tiposCriaveis,
@@ -18,6 +19,7 @@ const SEM_SENHA = {
   email: true,
   telefone: true,
   ativo: true,
+  pode_operar_caixa: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -86,6 +88,7 @@ export async function rotasUsuarios(app: FastifyInstance) {
       email?: string;
       telefone?: string;
       matricula?: string;
+      pode_operar_caixa?: boolean;
     };
 
     const nome = body.nome?.trim();
@@ -123,6 +126,10 @@ export async function rotasUsuarios(app: FastifyInstance) {
         email,
         telefone: limparOpcional(body.telefone),
         matricula,
+        pode_operar_caixa:
+          (quem === "ADMIN" || quem === "ROOT") && body.pode_operar_caixa !== undefined
+            ? Boolean(body.pode_operar_caixa)
+            : padraoPodeOperarCaixa(tipo),
       },
       select: SEM_SENHA,
     });
@@ -152,6 +159,7 @@ export async function rotasUsuarios(app: FastifyInstance) {
       matricula?: string | null;
       tipo_usuario?: TipoUsuario;
       ativo?: boolean;
+      pode_operar_caixa?: boolean;
     };
 
     const data: Record<string, unknown> = {};
@@ -174,6 +182,16 @@ export async function rotasUsuarios(app: FastifyInstance) {
         return reply.code(403).send({ erro: `Você não pode definir o tipo ${body.tipo_usuario}` });
       }
       data.tipo_usuario = body.tipo_usuario;
+    }
+
+    if (body.pode_operar_caixa !== undefined) {
+      if (quem !== "ROOT" && quem !== "ADMIN") {
+        return reply.code(403).send({
+          erro: "Só o admin do restaurante altera a permissão de caixa.",
+          codigo: "sem_permissao",
+        });
+      }
+      data.pode_operar_caixa = Boolean(body.pode_operar_caixa);
     }
 
     if (body.ativo !== undefined) {

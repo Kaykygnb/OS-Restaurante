@@ -5,7 +5,12 @@ import { registrarAuditoria } from "../operacao/auditoria.js";
 import { enfileirarProducaoPedido } from "../operacao/producao.js";
 import { proximoCodigo } from "../operacao/sequencia.js";
 import { comIdempotencia } from "../operacao/idempotencia.js";
-import { validarPinGerente, tipoPodeAprovarSemPin } from "../operacao/pin.js";
+import { validarPinGerente, tipoPodeAprovarSemPin, exigirAprovacao } from "../operacao/pin.js";
+import { gravarPedido } from "../servicos/pedido.js";
+import { estornarItem } from "../servicos/estoque.js";
+import { corpoErro } from "../util/erros.js";
+import { linhaItemCentavos } from "../operacao/totais.js";
+import { publicar } from "../eventos/barramento.js";
 
 type BodyEscolha = { opcao_escolha_id: number; quantidade?: number };
 type BodyAdicional = { adicional_variante_id: number; quantidade?: number };
@@ -66,7 +71,13 @@ export async function rotasPedidos(app: FastifyInstance) {
       }
     }
 
-    return prisma.pedido.findMany({
+    const impressoraId = Number((req.query as any)?.impressora_id);
+    const categoriasEstacao = Number.isFinite(impressoraId) && impressoraId > 0
+      ? new Set(
+          (await prisma.impressora_categoria.findMany({ where: { impressora_id: impressoraId } })).map((l) => l.categoria_id)
+        )
+      : null;
+    const pedidos = await prisma.pedido.findMany({
       where,
       orderBy,
       take,
@@ -84,10 +95,31 @@ export async function rotasPedidos(app: FastifyInstance) {
           include: {
             escolhas: true,
             adicionais: true,
+            produto_variante: {
+              select: {
+                produto: { select: { exige_preparo: true, categoria_id: true, categoria: { select: { nao_imprime: true, nome: true } } } },
+              },
+            },
           },
         },
       },
     });
+    const agora = new Date().toISOString();
+    if (status !== "ABERTOS" && !categoriasEstacao) {
+      return pedidos.map((p) => ({ ...p, agora_servidor: agora }));
+    }
+    return pedidos
+      .map((p) => ({
+        ...p,
+        agora_servidor: agora,
+        itens: p.itens.filter((item) => {
+          const prod = item.produto_variante.produto;
+          if (!prod.exige_preparo || prod.categoria.nao_imprime) return false;
+          if (categoriasEstacao && !categoriasEstacao.has(prod.categoria_id)) return false;
+          return true;
+        }),
+      }))
+      .filter((p) => p.itens.length > 0);
   });
 
   app.post("/atendimentos/:id/pedidos", authOps, async (req, reply) => {
@@ -114,170 +146,18 @@ export async function rotasPedidos(app: FastifyInstance) {
 
       let resultado;
       try {
-        resultado = await prisma.$transaction(async (tx) => {
-          const atTx = await tx.atendimento.findUnique({ where: { id: atendimento_id } });
-          if (!atTx || atTx.status !== "ABERTO") {
-            throw new Error("Atendimento não está aberto");
-          }
-
-          const codigo = await proximoCodigo(tx, "PEDIDO", "PD");
-          const itensData: {
-            nome_produto: string;
-            preco_centavos: number;
-            quantidade: number;
-            observacao: string | null;
-            produto_variante_id: number;
-            escolhas: {
-              nome_opcao: string;
-              preco_extra_centavos: number;
-              quantidade: number;
-              opcao_escolha_id: number;
-            }[];
-            adicionais: {
-              nome_adicional: string;
-              preco_centavos: number;
-              quantidade: number;
-              adicional_variante_id: number;
-            }[];
-          }[] = [];
-
-          for (const raw of body.itens!) {
-            const variante_id = Number(raw.produto_variante_id);
-            const qtd = Math.max(1, Math.round(Number(raw.quantidade ?? 1)));
-            if (!Number.isFinite(variante_id)) throw new Error("produto_variante_id inválido");
-
-            const variante = await tx.produto_variante.findUnique({
-              where: { id: variante_id },
-              include: {
-                produto: true,
-                grupos_escolhas: {
-                  where: { ativo: true },
-                  include: { opcoes_escolha: { where: { ativo: true } } },
-                },
-              },
-            });
-            if (!variante || !variante.ativo || !variante.produto.ativo) {
-              throw new Error("Variante indisponível");
-            }
-
-            const nome_produto =
-              variante.nome.toLowerCase() === "padrão" || variante.nome.toLowerCase() === "padrao"
-                ? variante.produto.nome
-                : `${variante.produto.nome} - ${variante.nome}`;
-
-            const escolhasIn = Array.isArray(raw.escolhas) ? raw.escolhas : [];
-            const escolhasOut: (typeof itensData)[0]["escolhas"] = [];
-            for (const g of variante.grupos_escolhas) {
-              const doGrupo = escolhasIn.filter((e) =>
-                g.opcoes_escolha.some((o) => o.id === Number(e.opcao_escolha_id))
-              );
-              let total = 0;
-              for (const e of doGrupo) {
-                const op = g.opcoes_escolha.find((o) => o.id === Number(e.opcao_escolha_id))!;
-                const eq = Math.max(1, Math.round(Number(e.quantidade ?? 1)));
-                if (!g.permite_repetir && eq > 1) {
-                  throw new Error(`Grupo "${g.nome}" não permite repetir`);
-                }
-                total += eq;
-                escolhasOut.push({
-                  opcao_escolha_id: op.id,
-                  nome_opcao: op.nome,
-                  preco_extra_centavos: op.preco_extra_centavos,
-                  quantidade: eq,
-                });
-              }
-              if (total < g.min_escolhas) {
-                throw new Error(`Grupo "${g.nome}": mínimo ${g.min_escolhas}`);
-              }
-              if (total > g.max_escolhas) {
-                throw new Error(`Grupo "${g.nome}": máximo ${g.max_escolhas}`);
-              }
-            }
-
-            const adicionaisIn = Array.isArray(raw.adicionais) ? raw.adicionais : [];
-            const adicionaisOut: (typeof itensData)[0]["adicionais"] = [];
-            const catId = variante.produto.categoria_id;
-            const produtoId = variante.produto.id;
-
-            for (const a of adicionaisIn) {
-              const avId = Number(a.adicional_variante_id);
-              const aq = Math.max(1, Math.round(Number(a.quantidade ?? 1)));
-              const av = await tx.adicional_variante.findUnique({
-                where: { id: avId },
-                include: {
-                  adicional: {
-                    include: {
-                      grupo_adicionais: {
-                        include: {
-                          categorias: true,
-                          produtos_excluidos: true,
-                        },
-                      },
-                    },
-                  },
-                },
-              });
-              if (!av || !av.ativo || !av.adicional.ativo) {
-                throw new Error("Adicional indisponível");
-              }
-              if (aq > av.adicional.qtd_max) {
-                throw new Error(`"${av.nome}" máximo ${av.adicional.qtd_max}`);
-              }
-              const grupo = av.adicional.grupo_adicionais;
-              const ligado = grupo.categorias.some((c) => c.categoria_id === catId);
-              if (!ligado) {
-                throw new Error(`Adicional "${av.adicional.nome}" não pertence à categoria do produto`);
-              }
-              const excluido = grupo.produtos_excluidos.some((e) => e.produto_id === produtoId);
-              if (excluido) {
-                throw new Error(`Adicional "${av.adicional.nome}" não é permitido neste produto`);
-              }
-              adicionaisOut.push({
-                adicional_variante_id: av.id,
-                nome_adicional: av.nome,
-                preco_centavos: av.preco_centavos,
-                quantidade: aq,
-              });
-            }
-
-            itensData.push({
-              nome_produto,
-              preco_centavos: variante.preco_centavos,
-              quantidade: qtd,
-              observacao: raw.observacao?.trim() || null,
-              produto_variante_id: variante.id,
-              escolhas: escolhasOut,
-              adicionais: adicionaisOut,
-            });
-          }
-
-          return tx.pedido.create({
-            data: {
-              codigo_pedido: codigo,
-              atendimento_id,
-              itens: {
-                create: itensData.map((i) => ({
-                  nome_produto: i.nome_produto,
-                  preco_centavos: i.preco_centavos,
-                  quantidade: i.quantidade,
-                  observacao: i.observacao,
-                  produto_variante_id: i.produto_variante_id,
-                  escolhas: { create: i.escolhas },
-                  adicionais: { create: i.adicionais },
-                })),
-              },
-            },
-            include: {
-              itens: { include: includeItemFull },
-            },
-          });
-        });
+        resultado = await prisma.$transaction(async (tx) =>
+          gravarPedido(tx, {
+            atendimentoId: atendimento_id,
+            usuarioId: usuario_id,
+            itens: body.itens!,
+            tipoAtendimento: at.tipo_atendimento,
+          })
+        );
       } catch (err) {
-        return {
-          status: 400,
-          corpo: { erro: err instanceof Error ? err.message : "Falha ao lançar pedido" },
-        };
+        return corpoErro(err, "Falha ao lançar pedido");
       }
+
 
       // Pedido já gravado: nunca 400 daqui pra baixo (evita reenvio duplicado)
       let impressao: Awaited<ReturnType<typeof enfileirarProducaoPedido>> = {
@@ -322,10 +202,15 @@ export async function rotasPedidos(app: FastifyInstance) {
         /* auditoria não bloqueia */
       }
 
+      publicar("pedido.criado", resultado.id);
+      publicar("atendimento.atualizado", atendimento_id);
       return {
         status: 201,
         corpo: {
-          pedido: resultado,
+          pedido: {
+            ...resultado,
+            itens: resultado.itens.map((item) => ({ ...item, valor_linha_centavos: linhaItemCentavos(item) })),
+          },
           impressao,
         },
       };
@@ -361,9 +246,11 @@ export async function rotasPedidos(app: FastifyInstance) {
         };
       }
 
+      const marca =
+        status === "PREPARO" ? { preparo_em: new Date() } : status === "PRONTO" ? { pronto_em: new Date() } : status === "ENTREGUE" ? { entregue_em: new Date() } : {};
       const atualizado = await prisma.pedido.update({
         where: { id },
-        data: { status: status as any },
+        data: { status: status as any, ...marca },
         include: {
           atendimento: {
             select: {

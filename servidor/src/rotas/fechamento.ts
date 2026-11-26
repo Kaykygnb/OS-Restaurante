@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { prisma } from "../db.js";
-import { soTipos, type TipoUsuario } from "../permissoes.js";
+import { exigirCaixa, soTipos, type TipoUsuario } from "../permissoes.js";
 import { registrarAuditoria } from "../operacao/auditoria.js";
 import { tipoPodeAprovarSemPin, validarPinGerente } from "../operacao/pin.js";
 import {
@@ -13,9 +13,10 @@ import { comIdempotencia } from "../operacao/idempotencia.js";
 import { documentoComprovante, documentoConta } from "../impressao/documentos.js";
 import { resolverDestinoCaixa, resolverDestinoPreconta } from "../impressao/destino.js";
 import { enfileirarDocumentoNegocio } from "../impressao/enfileirar-doc.js";
-import { configDocumento } from "../impressao/destino.js";
-import { documentoGaveta } from "../impressao/documentos.js";
-import { imprimirAgora } from "../impressao/fila.js";
+import { pulsarGaveta } from "../servicos/gaveta.js";
+import { formatarDinheiroEscpos } from "../impressao/escpos.js";
+import { exigirAprovacao } from "../operacao/pin.js";
+import { publicar } from "../eventos/barramento.js";
 
 const includeAberto = {
   mesa: true,
@@ -31,12 +32,15 @@ async function carregarAberto(id: number) {
 }
 
 async function exigirCaixaAberto() {
-  return prisma.caixa_sessao.findFirst({ where: { fechado_em: null }, orderBy: { aberto_em: "desc" } });
+  return prisma.caixa_sessao.findFirst({ where: { aberta: true }, orderBy: { aberto_em: "desc" } });
 }
 
 export async function rotasFechamento(app: FastifyInstance) {
   const authOps = {
     onRequest: [(app as any).autenticar, soTipos("ROOT", "ADMIN", "GERENTE", "ATENDENTE")],
+  };
+  const authCaixa = {
+    onRequest: [(app as any).autenticar, soTipos("ROOT", "ADMIN", "GERENTE", "ATENDENTE"), exigirCaixa()],
   };
 
   app.post("/atendimentos/:id/taxa-servico", authOps, async (req, reply) => {
@@ -45,16 +49,24 @@ export async function rotasFechamento(app: FastifyInstance) {
     const at = await carregarAberto(id);
     if (!at || at.status !== "ABERTO") return reply.code(400).send({ erro: "Atendimento inválido" });
 
+    if (at.tipo_atendimento !== "MESA") {
+      return reply.code(409).send({ erro: "A taxa de serviço vale só para mesa.", codigo: "taxa_servico_so_mesa" });
+    }
     const pct = await percentualTaxaServico();
-    const itens = at.pedidos.flatMap((p) => p.itens);
-    const sub = subtotalItensCentavos(itens);
-    const valor = aplicar ? Math.round(sub * (pct / 100)) : 0;
-
-    // Guarda flag; centavos só snapshot auxiliar (totais sempre recalculam)
-    return prisma.atendimento.update({
+    await prisma.atendimento.update({
       where: { id },
-      data: { taxa_servico_aplicada: aplicar, taxa_servico_centavos: valor },
+      data: { taxa_servico_aplicada: aplicar },
     });
+    await registrarAuditoria(prisma, {
+      usuario_id: Number((req.user as any).id),
+      tipo: aplicar ? "servico.aplicado" : "servico.removido",
+      sensivel: !aplicar,
+      atendimento_id: id,
+      detalhes: { percentual: pct, aplicar },
+    });
+    publicar("atendimento.atualizado", id);
+    const atualizado = await carregarAberto(id);
+    return { ...(atualizado as object), totais: await calcularTotaisAtendimento(atualizado as any) };
   });
 
   app.post("/atendimentos/:id/desconto", {
@@ -69,40 +81,73 @@ export async function rotasFechamento(app: FastifyInstance) {
       aprovador_id?: number;
     };
     const valorPedido = Math.max(0, Math.round(Number(body.valor_centavos ?? 0)));
-    const motivo = body.motivo?.trim() || null;
+    const percentual = Math.max(0, Math.round(Number((body as any).percentual ?? 0)));
+    const motivo = body.motivo?.trim() || "";
     const at = await carregarAberto(id);
-    if (!at || at.status !== "ABERTO") return reply.code(400).send({ erro: "Atendimento inválido" });
+    if (!at || at.status !== "ABERTO") return reply.code(400).send({ erro: "Conta não está aberta.", codigo: "atendimento_fechado" });
+    if ((valorPedido > 0 || percentual > 0) && !motivo) {
+      return reply.code(400).send({ erro: "Informe o motivo do desconto.", codigo: "motivo_obrigatorio" });
+    }
 
     const itens = at.pedidos.flatMap((p) => p.itens);
     const subtotal = subtotalItensCentavos(itens);
-    if (valorPedido > subtotal) {
+    const valor = percentual > 0 ? Math.min(subtotal, Math.round(subtotal * (percentual / 100))) : valorPedido;
+    if (valor > subtotal) {
       return reply.code(400).send({
-        erro: `Desconto não pode passar do subtotal (${subtotal} centavos)`,
+        erro: `O desconto não pode passar de ${formatarDinheiroEscpos(subtotal)}.`,
+        codigo: "desconto_acima_subtotal",
       });
     }
-    const valor = valorPedido;
 
     const cfg = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
-    const limite = cfg?.limite_desconto_sem_pin_centavos ?? 500;
     const tipo = (req.user as any).tipo as TipoUsuario;
-    let aprovadorId = Number((req.user as any).id);
-
-    if (valor > limite && !tipoPodeAprovarSemPin(tipo)) {
-      const aprov = await validarPinGerente(body.pin, body.aprovador_id);
-      if (!aprov) {
-        return reply.code(403).send({
-          erro: "Desconto acima do limite exige PIN de um GERENTE+ (informe aprovador_id e pin)",
-        });
+    const usuarioId = Number((req.user as any).id);
+    const tetoAtendente = Math.min(
+      cfg?.limite_desconto_sem_pin_centavos ?? 500,
+      Math.round(subtotal * ((cfg?.limite_desconto_atendente_percentual ?? 10) / 100))
+    );
+    const tetoGerente = Math.min(
+      cfg?.limite_desconto_gerente_centavos ?? 5000,
+      Math.round(subtotal * ((cfg?.limite_desconto_gerente_percentual ?? 30) / 100))
+    );
+    const acima =
+      tipo === "ATENDENTE" ? valor > tetoAtendente : tipo === "GERENTE" ? valor > tetoGerente : false;
+    const aprov = await exigirAprovacao({
+      tipo,
+      usuarioId,
+      pin: body.pin ?? null,
+      aprovadorId: body.aprovador_id ?? null,
+      acimaDoLimite: acima,
+      acao: "desconto.conta",
+    });
+    if (!aprov) {
+      return reply.code(403).send({
+        erro: "Esse desconto precisa do PIN de um gerente.",
+        codigo: "pin_invalido",
+      });
+    }
+    if (tipo === "GERENTE" && valor > tetoGerente) {
+      const gerente = await validarPinGerente(body.pin, body.aprovador_id);
+      if (!gerente || !["ROOT", "ADMIN"].includes(gerente.tipo_usuario)) {
+        return reply.code(403).send({ erro: "Acima do limite do gerente, só o dono aprova.", codigo: "pin_invalido" });
       }
-      aprovadorId = aprov.id;
+    }
+    const aprovadorId = aprov.aprovadorId;
+    const cortesia = Boolean((body as any).cortesia);
+    if (cortesia && tipo === "ATENDENTE" && !aprov.comPin) {
+      return reply.code(403).send({ erro: "Cortesia precisa do PIN de um gerente.", codigo: "pin_invalido" });
     }
 
     const up = await prisma.atendimento.update({
       where: { id },
       data: {
         desconto_centavos: valor,
-        desconto_motivo: motivo,
-        desconto_usuario_id: valor ? aprovadorId : null,
+        desconto_tipo: percentual > 0 ? "PERCENTUAL" : "VALOR",
+        desconto_percentual: percentual,
+        desconto_motivo: motivo || null,
+        desconto_usuario_id: valor ? usuarioId : null,
+        desconto_aprovador_id: aprov.comPin ? aprovadorId : null,
+        cortesia,
       },
     });
     await registrarAuditoria(prisma, {
@@ -178,7 +223,7 @@ export async function rotasFechamento(app: FastifyInstance) {
     return { ok: true, totais, impressao };
   });
 
-  app.post("/atendimentos/:id/pagamentos", authOps, async (req, reply) => {
+  app.post("/atendimentos/:id/pagamentos", authCaixa, async (req, reply) => {
     const id = Number((req.params as any).id);
     const rota = `POST /atendimentos/${id}/pagamentos`;
     return comIdempotencia(req, reply, rota, async () => {
@@ -209,10 +254,10 @@ export async function rotasFechamento(app: FastifyInstance) {
       if (!Number.isFinite(recebido) || recebido < valor) {
         return { status: 400, corpo: { erro: "Valor recebido menor que o pagamento" } };
       }
-      if (!forma.abre_gaveta && recebido !== valor) {
-        return { status: 400, corpo: { erro: "Nesta forma o recebido deve ser igual ao valor" } };
+      if (!forma.eh_dinheiro && recebido !== valor) {
+        return { status: 400, corpo: { erro: "Nesta forma o valor recebido tem que ser igual ao pagamento.", codigo: "recebido_invalido" } };
       }
-      const troco = forma.abre_gaveta ? Math.max(0, recebido - valor) : 0;
+      const troco = forma.eh_dinheiro ? Math.max(0, recebido - valor) : 0;
       const usuario_id = Number((req.user as any).id);
 
       try {
@@ -240,16 +285,19 @@ export async function rotasFechamento(app: FastifyInstance) {
           const totais = totalAtendimentoAberto({
             itens,
             desconto_centavos: at.desconto_centavos,
+            desconto_tipo: at.desconto_tipo,
+            desconto_percentual: at.desconto_percentual,
             acrescimo_centavos: at.acrescimo_centavos,
             taxa_servico_aplicada: at.taxa_servico_aplicada,
             taxa_servico_percentual: pct,
             taxa_entrega_centavos: at.taxa_entrega_centavos,
+            tipo_atendimento: at.tipo_atendimento,
             pago_centavos: pagoAntes,
           });
           if (valor > totais.restante_centavos) {
             throw Object.assign(
-              new Error(`Valor maior que o restante (${totais.restante_centavos} centavos)`),
-              { status: 400 }
+              new Error(`O valor passa do restante (${formatarDinheiroEscpos(totais.restante_centavos)}).`),
+              { status: 400, codigo: "acima_restante" }
             );
           }
 
@@ -267,16 +315,14 @@ export async function rotasFechamento(app: FastifyInstance) {
           });
         });
 
-        if (forma.abre_gaveta) {
-          const cfgDoc = await configDocumento("COMPROVANTE");
-          const imp = await resolverDestinoCaixa();
-          if (cfgDoc?.abre_gaveta && imp?.tem_gaveta) {
-            try {
-              await imprimirAgora(imp, "COMPROVANTE", documentoGaveta());
-            } catch {
-              /* não bloqueia pagamento */
-            }
-          }
+        const gaveta = forma.eh_dinheiro ? await pulsarGaveta() : "nao_usada";
+        if (gaveta === "falhou") {
+          await registrarAuditoria(prisma, {
+            usuario_id,
+            tipo: "caixa.gaveta_falhou",
+            atendimento_id: id,
+            detalhes: { operacao: "pagamento" },
+          });
         }
 
         await registrarAuditoria(prisma, {
@@ -287,7 +333,9 @@ export async function rotasFechamento(app: FastifyInstance) {
           detalhes: { valor, forma: forma.nome, troco },
         });
 
-        return { status: 201, corpo: pag };
+        publicar("atendimento.atualizado", id);
+        publicar("caixa.atualizado", caixa.id);
+        return { status: 201, corpo: { ...pag, gaveta } };
       } catch (err: any) {
         return {
           status: err?.status ?? 400,
@@ -298,7 +346,7 @@ export async function rotasFechamento(app: FastifyInstance) {
   });
 
   app.post("/pagamentos/:id/estornar", {
-    ...authOps,
+    ...authCaixa,
     config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
   }, async (req, reply) => {
     const id = Number((req.params as any).id);
@@ -355,7 +403,7 @@ export async function rotasFechamento(app: FastifyInstance) {
     }
   });
 
-  app.post("/atendimentos/:id/fechar", authOps, async (req, reply) => {
+  app.post("/atendimentos/:id/fechar", authCaixa, async (req, reply) => {
     const id = Number((req.params as any).id);
     const rota = `POST /atendimentos/${id}/fechar`;
     return comIdempotencia(req, reply, rota, async () => {
@@ -392,13 +440,22 @@ export async function rotasFechamento(app: FastifyInstance) {
             taxa_servico_aplicada: atTx.taxa_servico_aplicada,
             taxa_servico_percentual: pct,
             taxa_entrega_centavos: atTx.taxa_entrega_centavos,
+            tipo_atendimento: atTx.tipo_atendimento,
+            desconto_tipo: atTx.desconto_tipo,
+            desconto_percentual: atTx.desconto_percentual,
             pago_centavos: pago,
           });
 
+          if (totaisTx.total_centavos === 0 && !atTx.cortesia) {
+            throw Object.assign(
+              new Error("Conta zerada só fecha como cortesia aprovada."),
+              { status: 409, codigo: "cortesia_obrigatoria", totais: totaisTx }
+            );
+          }
           if (totaisTx.restante_centavos > 0) {
             throw Object.assign(
-              new Error(`Ainda falta pagar ${totaisTx.restante_centavos} centavos`),
-              { status: 400, totais: totaisTx }
+              new Error(`Ainda falta pagar ${formatarDinheiroEscpos(totaisTx.restante_centavos)}.`),
+              { status: 400, codigo: "pagamento_incompleto", totais: totaisTx }
             );
           }
 
@@ -457,7 +514,7 @@ export async function rotasFechamento(app: FastifyInstance) {
             payload,
             atendimento_id: id,
             agora: true,
-            abrir_gaveta: houveDinheiro,
+            abrir_gaveta: false,
           });
         }
 
