@@ -1,7 +1,7 @@
 /** Montagem manual de bytes ESC/POS (térmicas Elgin/Bematech/Epson/genéricas). */
+import iconv from "iconv-lite";
 
 const ESC = 0x1b;
-const GS = 0x1d;
 
 export type Codificacao = "CP860" | "CP850" | "CP437";
 
@@ -12,64 +12,30 @@ const CODE_PAGE: Record<Codificacao, number> = {
   CP860: 3,
 };
 
-function encoderTexto(texto: string, codificacao: Codificacao): Buffer {
-  // Node não traz CP860 nativo; mapeamos caracteres latinos comuns pra bytes CP860/CP850.
-  // Fallback: remove acento se não houver mapa.
-  const mapa: Record<string, number> = {
-    Á: 0xb5,
-    À: 0xb7,
-    Â: 0xb6,
-    Ã: 0xc7,
-    É: 0x90,
-    Ê: 0xd2,
-    Í: 0xd6,
-    Ó: 0xe0,
-    Ô: 0xe2,
-    Õ: 0xe5,
-    Ú: 0xe9,
-    Ü: 0x9a,
-    Ç: 0x80,
-    á: 0xa0,
-    à: 0x85,
-    â: 0x83,
-    ã: 0xc6,
-    é: 0x82,
-    ê: 0x88,
-    í: 0xa1,
-    ó: 0xa2,
-    ô: 0x93,
-    õ: 0xe4,
-    ú: 0xa3,
-    ü: 0x81,
-    ç: 0x87,
-    º: 0xa7,
-    ª: 0xa6,
-    "°": 0xf8,
-  };
+const ICONV: Record<Codificacao, string> = {
+  CP437: "cp437",
+  CP850: "cp850",
+  CP860: "cp860",
+};
 
-  // Ajuste fino CP850 vs CP860 nos mesmos glyphs quando diverge
-  if (codificacao === "CP850") {
-    Object.assign(mapa, {
-      Ã: 0xc7,
-      Õ: 0xe5,
-      ã: 0xc6,
-      õ: 0xe4,
-    });
+export function encoderTexto(texto: string, codificacao: Codificacao): Buffer {
+  const page = ICONV[codificacao] ?? "cp860";
+  // iconv-lite cobre CP850/CP437; CP860: mapeamos via CP850 + ajustes PT se necessário
+  if (iconv.encodingExists(page)) {
+    return iconv.encode(texto, page);
   }
+  // Fallback: CP850 (melhor cobertura Latin-1 BR)
+  return iconv.encode(texto, "cp850");
+}
 
-  const out: number[] = [];
-  for (const ch of texto) {
-    const code = ch.charCodeAt(0);
-    if (code < 128) out.push(code);
-    else if (mapa[ch] !== undefined) out.push(mapa[ch]!);
-    else {
-      // remove diacrítico aproximado
-      const base = ch.normalize("NFD").replace(/\p{M}/gu, "");
-      if (base.length && base.charCodeAt(0) < 128) out.push(base.charCodeAt(0));
-      else out.push(0x3f); // ?
-    }
-  }
-  return Buffer.from(out);
+/** Dinheiro no cupom sem NBSP do toLocaleString. */
+export function formatarDinheiroEscpos(centavos: number): string {
+  const neg = centavos < 0;
+  const abs = Math.abs(Math.round(centavos));
+  const reais = Math.floor(abs / 100);
+  const cents = String(abs % 100).padStart(2, "0");
+  const inteiro = reais.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return `${neg ? "-" : ""}R$ ${inteiro},${cents}`;
 }
 
 export class EscPosBuilder {
@@ -79,118 +45,99 @@ export class EscPosBuilder {
     private codificacao: Codificacao = "CP860"
   ) {}
 
-  private push(...bytes: number[]) {
-    this.partes.push(Buffer.from(bytes));
-    return this;
-  }
-
-  private pushBuf(buf: Buffer) {
-    this.partes.push(buf);
-    return this;
+  private push(...bufs: Buffer[]) {
+    this.partes.push(...bufs);
   }
 
   init() {
-    this.push(ESC, 0x40); // ESC @
-    const n = CODE_PAGE[this.codificacao] ?? 3;
-    this.push(ESC, 0x74, n); // ESC t n
+    this.push(Buffer.from([ESC, 0x40]));
+    this.push(Buffer.from([ESC, 0x74, CODE_PAGE[this.codificacao]]));
     return this;
   }
 
-  align(modo: "esquerda" | "centro" | "direita" = "esquerda") {
-    const n = modo === "centro" ? 1 : modo === "direita" ? 2 : 0;
-    return this.push(ESC, 0x61, n);
+  align(a: "esquerda" | "centro" | "direita") {
+    const n = a === "centro" ? 1 : a === "direita" ? 2 : 0;
+    this.push(Buffer.from([ESC, 0x61, n]));
+    return this;
   }
 
   negrito(on: boolean) {
-    return this.push(ESC, 0x45, on ? 1 : 0);
-  }
-
-  tamanho(duploH = false, duploL = false) {
-    const n = (duploL ? 0x10 : 0) | (duploH ? 0x01 : 0);
-    return this.push(GS, 0x21, n);
-  }
-
-  texto(linha: string) {
-    this.pushBuf(encoderTexto(linha, this.codificacao));
-    return this.push(0x0a);
-  }
-
-  linhas(texto: string) {
-    for (const l of texto.split("\n")) this.texto(l);
+    this.push(Buffer.from([ESC, 0x45, on ? 1 : 0]));
     return this;
   }
 
-  separador(char = "-") {
-    return this.texto(char.repeat(Math.max(8, this.colunas)));
+  /** ESC ! n - bits 4/5 ligam altura/largura dupla; aceito pelo emulador ESC/POS usado no desenvolvimento. */
+  tamanho(letra: "NORMAL" | "GRANDE" | "EXTRA" = "NORMAL") {
+    const n = letra === "EXTRA" ? 0x30 : letra === "GRANDE" ? 0x10 : 0x00;
+    this.push(Buffer.from([ESC, 0x21, n]));
+    return this;
   }
 
-  regua() {
-    let s = "";
-    for (let i = 1; i <= this.colunas; i++) s += String(i % 10);
-    return this.texto(s);
+  beep() {
+    // ESC B n t — algumas térmicas BR; ignorado se não suportado
+    this.push(Buffer.from([ESC, 0x42, 0x02, 0x02]));
+    return this;
+  }
+
+  texto(t: string) {
+    this.push(encoderTexto(t + "\n", this.codificacao));
+    return this;
+  }
+
+  separador(ch = "-") {
+    const linha = ch.repeat(Math.max(8, this.colunas));
+    return this.texto(linha.slice(0, this.colunas));
   }
 
   alimentar(n = 3) {
-    return this.push(ESC, 0x64, n); // ESC d n
+    this.push(Buffer.from([ESC, 0x64, Math.max(0, Math.min(255, n))]));
+    return this;
   }
 
   cortar() {
-    // GS V 0 — corte total
-    return this.push(GS, 0x56, 0x00);
+    // ESC m é suportado pelo emulador e também é um comando ESC/POS de corte.
+    this.push(Buffer.from([ESC, 0x6d]));
+    return this;
   }
 
-  abrirGaveta(pino = 0) {
-    // ESC p m t1 t2 — pulse pin 0 (caixa)
-    return this.push(ESC, 0x70, pino & 0xff, 0x19, 0xfa);
+  gaveta() {
+    this.push(Buffer.from([ESC, 0x70, 0x00, 0x19, 0xfa]));
+    return this;
   }
 
-  build(): Buffer {
+  build() {
     return Buffer.concat(this.partes);
   }
 }
 
-export function montarCupomTeste(opts: {
+export type ItemProducaoLinha = {
   nome: string;
+  quantidade: number;
+  observacao?: string | null;
+  escolhas?: string[];
+  adicionais?: string[];
+  cancelado?: boolean;
+};
+
+/** @deprecated use ItemProducaoLinha */
+export type ItemProducaoCupom = ItemProducaoLinha;
+
+export function montarCupomTeste(opts: {
   colunas: number;
   codificacao?: Codificacao;
   tem_guilhotina?: boolean;
+  nome?: string;
 }): Buffer {
   const b = new EscPosBuilder(opts.colunas, opts.codificacao ?? "CP860");
   b.init();
-  b.align("centro").negrito(true).tamanho(true, true);
-  b.texto("TESTE DE IMPRESSAO");
-  b.tamanho(false, false).negrito(false);
-  b.separador("=");
-  b.align("esquerda");
-  b.texto(`Impressora: ${opts.nome}`);
-  b.texto(`Data: ${new Date().toLocaleString("pt-BR")}`);
-  b.texto(`Colunas: ${opts.colunas}`);
-  b.separador("-");
-  b.texto("Regua de colunas:");
-  b.regua();
-  b.separador("-");
-  b.texto("Acentos: Acao, coracao, pao");
-  b.texto("Ação, coração, pão");
-  b.separador("=");
-  b.align("centro").texto("Se leu isto, a conexao OK");
+  b.align("centro").negrito(true).texto(opts.nome || "TESTE").negrito(false);
+  b.texto("OS-Restaurante — teste de impressao");
+  b.texto("Acentos: pão, coração, açúcar, mamão");
+  b.texto(formatarDinheiroEscpos(1050));
   b.alimentar(4);
   if (opts.tem_guilhotina) b.cortar();
   return b.build();
 }
-
-export function montarPulseGaveta(): Buffer {
-  const b = new EscPosBuilder(32);
-  b.init().abrirGaveta(0);
-  return b.build();
-}
-
-export type ItemProducaoLinha = {
-  quantidade: number;
-  nome: string;
-  observacao?: string | null;
-  escolhas?: string[];
-  adicionais?: string[];
-};
 
 export function montarCupomConta(opts: {
   colunas: number;
@@ -208,11 +155,10 @@ export function montarCupomConta(opts: {
   total_centavos: number;
 }): Buffer {
   const b = new EscPosBuilder(opts.colunas, opts.codificacao ?? "CP860");
-  const money = (c: number) =>
-    (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const money = formatarDinheiroEscpos;
   b.init();
   b.align("centro").negrito(true).texto(opts.nome_restaurante || "PRE-CONTA").negrito(false);
-  b.texto("PRE-CONTA (nao fiscal)");
+  b.texto("NAO E DOCUMENTO FISCAL");
   b.separador("=");
   b.align("esquerda");
   b.texto(`Conta ${opts.codigo_atendimento}`);
@@ -228,7 +174,9 @@ export function montarCupomConta(opts: {
     } else b.texto(l.texto);
   }
   b.separador("-");
-  b.texto(`Subtotal${" ".repeat(Math.max(1, opts.colunas - 8 - money(opts.subtotal_centavos).length))}${money(opts.subtotal_centavos)}`);
+  b.texto(
+    `Subtotal${" ".repeat(Math.max(1, opts.colunas - 8 - money(opts.subtotal_centavos).length))}${money(opts.subtotal_centavos)}`
+  );
   if (opts.desconto_centavos) b.texto(`Desconto  -${money(opts.desconto_centavos)}`);
   if (opts.acrescimo_centavos) b.texto(`Acrescimo  ${money(opts.acrescimo_centavos)}`);
   if (opts.taxa_servico_centavos) b.texto(`Servico    ${money(opts.taxa_servico_centavos)}`);
@@ -247,22 +195,37 @@ export function montarCupomComprovante(opts: {
   mensagem_cupom?: string | null;
   codigo_atendimento: string;
   total_centavos: number;
-  pagamentos: { forma: string; valor_centavos: number; troco_centavos: number }[];
+  pagamentos: {
+    forma: string;
+    valor_centavos: number;
+    troco_centavos: number;
+    valor_recebido_centavos?: number;
+  }[];
+  cliente_nome?: string | null;
+  cliente_telefone?: string | null;
+  cliente_endereco?: string | null;
+  observacao?: string | null;
 }): Buffer {
   const b = new EscPosBuilder(opts.colunas, opts.codificacao ?? "CP860");
-  const money = (c: number) =>
-    (c / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const money = formatarDinheiroEscpos;
   b.init();
   b.align("centro").negrito(true).texto(opts.nome_restaurante || "COMPROVANTE").negrito(false);
-  b.texto("COMPROVANTE (nao fiscal)");
+  b.texto("NAO E DOCUMENTO FISCAL");
   b.separador("=");
   b.align("esquerda");
   b.texto(`Conta ${opts.codigo_atendimento}`);
   b.texto(new Date().toLocaleString("pt-BR"));
+  if (opts.cliente_nome) b.texto(`Cliente: ${opts.cliente_nome}`);
+  if (opts.cliente_telefone) b.texto(`Tel: ${opts.cliente_telefone}`);
+  if (opts.cliente_endereco) b.texto(`End: ${opts.cliente_endereco}`);
+  if (opts.observacao) b.texto(`Obs: ${opts.observacao}`);
   b.separador("-");
   b.negrito(true).texto(`TOTAL  ${money(opts.total_centavos)}`).negrito(false);
   for (const p of opts.pagamentos) {
     b.texto(`${p.forma}: ${money(p.valor_centavos)}`);
+    if (p.valor_recebido_centavos != null && p.valor_recebido_centavos !== p.valor_centavos) {
+      b.texto(`  Recebido: ${money(p.valor_recebido_centavos)}`);
+    }
     if (p.troco_centavos) b.texto(`  Troco: ${money(p.troco_centavos)}`);
   }
   if (opts.mensagem_cupom) {
@@ -282,32 +245,97 @@ export function montarCupomProducao(opts: {
   codigo_atendimento: string;
   mesa?: string | null;
   tipo_atendimento?: string;
-  cancelamento?: boolean;
+  setor?: string | null;
+  garcom_nome?: string | null;
+  observacao_atendimento?: string | null;
   itens: ItemProducaoLinha[];
+  cancelamento?: boolean;
+  reimpressao?: boolean;
+  motivo_cancelamento?: string | null;
+  cancelado_por?: string | null;
+  hora_original?: Date | string | null;
+  tamanho_letra?: string;
+  apita?: boolean;
 }): Buffer {
+  const letra =
+    opts.tamanho_letra === "EXTRA" || opts.tamanho_letra === "GRANDE" || opts.tamanho_letra === "NORMAL"
+      ? opts.tamanho_letra
+      : "GRANDE";
   const b = new EscPosBuilder(opts.colunas, opts.codificacao ?? "CP860");
   b.init();
-  b.align("centro").negrito(true).tamanho(true, true);
-  b.texto(opts.cancelamento ? "*** CANCELADO ***" : "PRODUCAO");
-  b.tamanho(false, false).negrito(false);
-  b.separador("=");
+  if (opts.apita) b.beep();
+  b.align("centro").negrito(true).tamanho("EXTRA");
+  if (opts.cancelamento) b.texto("*** CANCELADO ***");
+  if (opts.reimpressao) b.texto("*** REIMPRESSAO ***");
+  b.tamanho("GRANDE").texto((opts.setor || "PRODUCAO").toUpperCase());
+  b.tamanho("NORMAL").negrito(false);
+  b.texto(opts.codigo_pedido);
   b.align("esquerda");
-  b.negrito(true).texto(`Pedido ${opts.codigo_pedido}`).negrito(false);
   b.texto(`Conta ${opts.codigo_atendimento}`);
   if (opts.mesa) b.texto(`Mesa ${opts.mesa}`);
-  else if (opts.tipo_atendimento) b.texto(opts.tipo_atendimento);
-  b.texto(new Date().toLocaleString("pt-BR"));
+  if (opts.tipo_atendimento) b.texto(`Tipo: ${opts.tipo_atendimento}`);
+  if (opts.garcom_nome) b.texto(`Garcom: ${opts.garcom_nome}`);
+  if (opts.reimpressao && opts.hora_original) {
+    const h =
+      opts.hora_original instanceof Date
+        ? opts.hora_original.toLocaleString("pt-BR")
+        : String(opts.hora_original);
+    b.texto(`Original: ${h}`);
+  } else {
+    b.texto(new Date().toLocaleString("pt-BR"));
+  }
+  if (opts.cancelamento) {
+    if (opts.cancelado_por) b.texto(`Cancelado por: ${opts.cancelado_por}`);
+    if (opts.motivo_cancelamento) b.texto(`Motivo: ${opts.motivo_cancelamento}`);
+  }
   b.separador("-");
   for (const item of opts.itens) {
-    b.negrito(true).tamanho(true, false);
-    b.texto(`${item.quantidade}x ${item.nome}`);
-    b.tamanho(false, false).negrito(false);
+    b.tamanho(letra).negrito(true).texto(`${item.quantidade}x ${item.nome}`).negrito(false).tamanho("NORMAL");
     for (const e of item.escolhas ?? []) b.texto(`  - ${e}`);
     for (const a of item.adicionais ?? []) b.texto(`  + ${a}`);
-    if (item.observacao) b.texto(`  Obs: ${item.observacao}`);
+    if (item.observacao) b.texto(`  obs: ${item.observacao}`);
   }
-  b.separador("=");
+  if (opts.observacao_atendimento) {
+    b.separador("-");
+    b.texto(`Obs conta: ${opts.observacao_atendimento}`);
+  }
   b.alimentar(4);
   if (opts.tem_guilhotina) b.cortar();
+  return b.build();
+}
+
+export function montarCupomRelatorioCaixa(opts: {
+  colunas: number;
+  codificacao?: Codificacao;
+  tem_guilhotina?: boolean;
+  titulo: string;
+  operador: string;
+  linhas: { texto: string; valor_centavos?: number }[];
+}): Buffer {
+  const b = new EscPosBuilder(opts.colunas, opts.codificacao ?? "CP860");
+  const money = formatarDinheiroEscpos;
+  b.init();
+  b.align("centro").negrito(true).texto(opts.titulo).negrito(false);
+  b.texto("NAO E DOCUMENTO FISCAL");
+  b.separador("=");
+  b.align("esquerda");
+  b.texto(`Operador: ${opts.operador}`);
+  b.texto(new Date().toLocaleString("pt-BR"));
+  b.separador("-");
+  for (const l of opts.linhas) {
+    if (l.valor_centavos != null) {
+      const dir = money(l.valor_centavos);
+      const pad = Math.max(1, opts.colunas - l.texto.length - dir.length);
+      b.texto(l.texto.slice(0, opts.colunas - dir.length - 1) + " ".repeat(pad) + dir);
+    } else b.texto(l.texto);
+  }
+  b.alimentar(4);
+  if (opts.tem_guilhotina) b.cortar();
+  return b.build();
+}
+
+export function montarPulseGaveta(): Buffer {
+  const b = new EscPosBuilder(32, "CP850");
+  b.gaveta();
   return b.build();
 }

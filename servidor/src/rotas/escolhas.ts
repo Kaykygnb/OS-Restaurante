@@ -76,7 +76,7 @@ export async function rotasEscolhas(app: FastifyInstance) {
       for (let i = 0; i < body.opcoes.length; i++) {
         const o = body.opcoes[i];
         const nomeOp = o?.nome?.trim();
-        if (!nomeOp) continue;
+        if (!o || !nomeOp) continue;
         const preco = o.preco_extra_centavos ?? 0;
         if (!Number.isFinite(preco) || preco < 0) {
           return reply.code(400).send({ erro: `Preço extra inválido em "${nomeOp}"` });

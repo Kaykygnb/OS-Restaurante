@@ -5,6 +5,8 @@ import { registrarAuditoria } from "../operacao/auditoria.js";
 import { validarPinGerente } from "../operacao/pin.js";
 import { documentoGaveta } from "../impressao/documentos.js";
 import { imprimirAgora } from "../impressao/fila.js";
+import { imprimirRelatorioCaixa, linhasFechamentoCaixa } from "../impressao/relatorio-caixa.js";
+import { resolverDestinoCaixa, configDocumento } from "../impressao/destino.js";
 
 async function sessaoAberta() {
   return prisma.caixa_sessao.findFirst({
@@ -34,7 +36,8 @@ export async function rotasCaixa(app: FastifyInstance) {
 
   app.get("/caixa/atual", authOps, async () => {
     const s = await sessaoAberta();
-    return { aberto: Boolean(s), sessao: s };
+    const temGaveta = await prisma.impressora.count({ where: { ativo: true, tem_gaveta: true } });
+    return { aberto: Boolean(s), sessao: s, tem_gaveta_disponivel: temGaveta > 0 };
   });
 
   app.post("/caixa/abrir", authOps, async (req, reply) => {
@@ -58,7 +61,12 @@ export async function rotasCaixa(app: FastifyInstance) {
       entidade_id: sessao.id,
       detalhes: { fundo },
     });
-    return reply.code(201).send(sessao);
+    const impressao = await imprimirRelatorioCaixa({
+      titulo: "ABERTURA DE CAIXA",
+      operador: sessao.usuario_abertura.nome,
+      linhas: [{ texto: "Fundo de troco", valor_centavos: fundo }],
+    });
+    return reply.code(201).send({ ...sessao, impressao });
   });
 
   app.post("/caixa/:id/movimentacao", authOps, async (req, reply) => {
@@ -84,29 +92,52 @@ export async function rotasCaixa(app: FastifyInstance) {
     }
 
     const tipoUser = (req.user as any).tipo as TipoUsuario;
+    let aprovadorId: number | null = null;
     if (body.tipo === "SANGRIA" && !["ROOT", "ADMIN", "GERENTE"].includes(tipoUser)) {
-      const aprov = await validarPinGerente(body.pin);
-      if (!aprov) return reply.code(403).send({ erro: "Sangria exige GERENTE+ ou PIN válido" });
+      const aprov = await validarPinGerente(body.pin, (body as any).aprovador_id);
+      if (!aprov) {
+        return reply.code(403).send({
+          erro: "Sangria exige GERENTE+ ou PIN válido (informe aprovador_id e pin)",
+        });
+      }
+      aprovadorId = aprov.id;
     }
 
     const usuario_id = Number((req.user as any).id);
-    const mov = await prisma.movimentacao_caixa.create({
-      data: {
-        caixa_sessao_id: id,
-        tipo: body.tipo,
-        valor_centavos: valor,
-        motivo,
+    const tipoMov = body.tipo;
+    const { comIdempotencia } = await import("../operacao/idempotencia.js");
+    return comIdempotencia(req, reply, `POST /caixa/${id}/movimentacoes`, async () => {
+      const mov = await prisma.movimentacao_caixa.create({
+        data: {
+          caixa_sessao_id: id,
+          tipo: tipoMov,
+          valor_centavos: valor,
+          motivo,
+          usuario_id,
+        },
+      });
+      await registrarAuditoria(prisma, {
         usuario_id,
-      },
+        acao: tipoMov,
+        entidade: "Movimentacao_caixa",
+        entidade_id: mov.id,
+        detalhes: { valor, motivo, caixa_sessao_id: id, aprovadorId },
+      });
+      const operador = await prisma.usuario.findUnique({
+        where: { id: usuario_id },
+        select: { nome: true },
+      });
+      const impressao = await imprimirRelatorioCaixa({
+        titulo: tipoMov,
+        operador: operador?.nome || "—",
+        linhas: [
+          { texto: motivo.slice(0, 32) },
+          { texto: "Valor", valor_centavos: valor },
+        ],
+        abrir_gaveta: true,
+      });
+      return { status: 201, corpo: { ...mov, impressao } };
     });
-    await registrarAuditoria(prisma, {
-      usuario_id,
-      acao: body.tipo,
-      entidade: "Movimentacao_caixa",
-      entidade_id: mov.id,
-      detalhes: { valor, motivo, caixa_sessao_id: id },
-    });
-    return reply.code(201).send(mov);
   });
 
   app.post("/caixa/:id/fechar", authGestao, async (req, reply) => {
@@ -156,22 +187,44 @@ export async function rotasCaixa(app: FastifyInstance) {
       entidade_id: id,
       detalhes: { esperado, informado, diferenca },
     });
-    return fechada;
+    const operador = await prisma.usuario.findUnique({
+      where: { id: usuario_id },
+      select: { nome: true },
+    });
+    const linhas = await linhasFechamentoCaixa(id);
+    const impressao = await imprimirRelatorioCaixa({
+      titulo: "FECHAMENTO DE CAIXA",
+      operador: operador?.nome || "—",
+      linhas,
+    });
+    return { ...fechada, impressao };
   });
 
   app.post("/caixa/gaveta", authOps, async (req, reply) => {
     const pin = (req.body as any)?.pin as string | undefined;
     const tipo = (req.user as any).tipo as TipoUsuario;
+    const temGaveta = await prisma.impressora.count({ where: { ativo: true, tem_gaveta: true } });
+    if (!temGaveta) {
+      return reply.code(400).send({ erro: "Nenhuma impressora com gaveta cadastrada" });
+    }
+    let aprovadorId: number | null = null;
     if (!["ROOT", "ADMIN", "GERENTE"].includes(tipo)) {
-      const ok = await validarPinGerente(pin);
-      if (!ok) return reply.code(403).send({ erro: "Abrir gaveta sem venda exige GERENTE+ ou PIN" });
+      const ok = await validarPinGerente(pin, (req.body as any)?.aprovador_id);
+      if (!ok) {
+        return reply.code(403).send({
+          erro: "Abrir gaveta sem venda exige GERENTE+ ou PIN (aprovador_id e pin)",
+        });
+      }
+      aprovadorId = ok.id;
     }
-    const cfg = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
-    if (!cfg?.impressora_caixa_id) {
-      return reply.code(400).send({ erro: "Configure a impressora do caixa" });
+    const imp = await resolverDestinoCaixa();
+    if (!imp?.tem_gaveta) {
+      return reply.code(400).send({ erro: "Impressora do caixa sem gaveta" });
     }
-    const imp = await prisma.impressora.findUnique({ where: { id: cfg.impressora_caixa_id } });
-    if (!imp || !imp.ativo) return reply.code(400).send({ erro: "Impressora do caixa indisponível" });
+    const cfgDoc = await configDocumento("COMPROVANTE");
+    if (!cfgDoc?.abre_gaveta) {
+      return reply.code(400).send({ erro: "Gaveta desligada na configuração do comprovante" });
+    }
 
     try {
       await imprimirAgora(imp, "COMPROVANTE", documentoGaveta());
@@ -185,7 +238,7 @@ export async function rotasCaixa(app: FastifyInstance) {
       acao: "ABRIR_GAVETA",
       entidade: "Impressora",
       entidade_id: imp.id,
-      detalhes: { sem_venda: true },
+      detalhes: { sem_venda: true, aprovadorId },
     });
     return { ok: true };
   });

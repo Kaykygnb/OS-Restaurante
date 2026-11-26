@@ -4,20 +4,19 @@ import type { TipoUsuario } from "../permissoes.js";
 
 const APROVA = new Set<TipoUsuario>(["ROOT", "ADMIN", "GERENTE"]);
 
-/** Valida PIN de um GERENTE+ ativo. Devolve o usuário aprovador ou null. */
-export async function validarPinGerente(pin: string | undefined | null) {
+/** Valida PIN de um aprovador específico (GERENTE+ ativo). */
+export async function validarPinGerente(
+  pin: string | undefined | null,
+  aprovadorId?: number | null
+) {
   if (!pin || pin.length < 4) return null;
-  const candidatos = await prisma.usuario.findMany({
-    where: {
-      ativo: true,
-      pin_hash: { not: null },
-      tipo_usuario: { in: ["ROOT", "ADMIN", "GERENTE"] },
-    },
-  });
-  for (const u of candidatos) {
-    if (u.pin_hash && (await bcrypt.compare(pin, u.pin_hash))) return u;
-  }
-  return null;
+  if (aprovadorId == null || !Number.isFinite(Number(aprovadorId))) return null;
+
+  const u = await prisma.usuario.findUnique({ where: { id: Number(aprovadorId) } });
+  if (!u?.ativo || !u.pin_hash) return null;
+  if (!APROVA.has(u.tipo_usuario as TipoUsuario)) return null;
+  if (!(await bcrypt.compare(pin, u.pin_hash))) return null;
+  return u;
 }
 
 export function tipoPodeAprovarSemPin(tipo: TipoUsuario) {

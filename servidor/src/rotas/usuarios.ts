@@ -28,7 +28,7 @@ function limparOpcional(v: string | null | undefined): string | null {
 }
 
 async function conflitoUnico(
-  campos: { login?: string; email?: string | null; matricula?: string | null },
+  campos: { login?: string; email?: string | null | undefined; matricula?: string | null | undefined },
   excetoId?: number
 ) {
   if (campos.login) {
@@ -202,6 +202,52 @@ export async function rotasUsuarios(app: FastifyInstance) {
       data,
       select: SEM_SENHA,
     });
+  });
+
+  /** Define ou troca o PIN de aprovação (gestão ou o próprio usuário GERENTE+). */
+  app.put("/usuarios/:id/pin", {
+    onRequest: [(app as any).autenticar],
+    config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+  }, async (req, reply) => {
+    const quem = (req as any).user.tipo as TipoUsuario;
+    const quemId = Number((req as any).user.id);
+    const id = Number((req.params as any).id);
+    if (!Number.isFinite(id)) return reply.code(400).send({ erro: "ID inválido" });
+
+    const alvo = await prisma.usuario.findUnique({ where: { id } });
+    if (!alvo) return reply.code(404).send({ erro: "Usuário não encontrado" });
+    if (!alvo.ativo) return reply.code(400).send({ erro: "Usuário inativo" });
+
+    const podeGestao = ["ROOT", "ADMIN", "GERENTE"].includes(quem) && (quem === "ROOT" || alvo.tipo_usuario !== "ROOT");
+    if (id !== quemId && !podeGestao) {
+      return reply.code(403).send({ erro: "Sem permissão para alterar este PIN" });
+    }
+    if (id !== quemId && !podeCriarTipo(quem, alvo.tipo_usuario as TipoUsuario) && quem !== "ROOT") {
+      return reply.code(403).send({ erro: "Sem permissão para alterar este PIN" });
+    }
+    if (!["ROOT", "ADMIN", "GERENTE"].includes(alvo.tipo_usuario)) {
+      return reply.code(400).send({ erro: "PIN de aprovação só para GERENTE, ADMIN ou ROOT" });
+    }
+
+    const body = req.body as { pin?: string; confirmar_pin?: string; remover?: boolean };
+    if (body.remover) {
+      await prisma.usuario.update({ where: { id }, data: { pin_hash: null } });
+      return { id, ok: true, mensagem: "PIN removido" };
+    }
+
+    const pin = body.pin;
+    if (!pin || !/^\d{4,8}$/.test(pin)) {
+      return reply.code(400).send({ erro: "PIN deve ter 4 a 8 dígitos" });
+    }
+    if (body.confirmar_pin !== undefined && body.confirmar_pin !== pin) {
+      return reply.code(400).send({ erro: "PIN e confirmação não conferem" });
+    }
+
+    await prisma.usuario.update({
+      where: { id },
+      data: { pin_hash: await bcrypt.hash(pin, 10) },
+    });
+    return { id, ok: true, mensagem: "PIN definido" };
   });
 
   /** Reset administrativo: define senha nova sem pedir a antiga. */

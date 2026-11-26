@@ -50,10 +50,16 @@ model Configuracao {
   limite_desconto_sem_pin_centavos Int @default(500) // Acima disso exige PIN de GERENTE+
 
   // Impressoras padrão (roteamento global)
-  impressora_conta_id Int? // Pré-conta
-  impressora_conta    Impressora? @relation("ConfigConta", fields: [impressora_conta_id], references: [id])
-  impressora_caixa_id Int? // Comprovante / gaveta
-  impressora_caixa    Impressora? @relation("ConfigCaixa", fields: [impressora_caixa_id], references: [id])
+  impressora_padrao_id   Int? // Fallback da loja (obrigatória se houver impressoras)
+  impressora_padrao      Impressora? @relation("ConfigPadrao", fields: [impressora_padrao_id], references: [id])
+  impressora_producao_id Int? // Produção padrão (sem categoria mapeada)
+  impressora_producao    Impressora? @relation("ConfigProducao", fields: [impressora_producao_id], references: [id])
+  impressora_conta_id    Int? // Pré-conta
+  impressora_conta       Impressora? @relation("ConfigConta", fields: [impressora_conta_id], references: [id])
+  impressora_caixa_id    Int? // Comprovante / gaveta / relatório
+  impressora_caixa       Impressora? @relation("ConfigCaixa", fields: [impressora_caixa_id], references: [id])
+
+  usa_tela_cozinha Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -94,11 +100,14 @@ model Usuario {
   descontos_aplicados Atendimento[] @relation("AtendimentoDesconto")
   acrescimos_aplicados Atendimento[] @relation("AtendimentoAcrescimo")
   itens_cancelados Pedido_item[] @relation("PedidoItemCancelamento")
-  pagamentos_recebidos Pagamento[]
+  pagamentos_recebidos Pagamento[] @relation("PagamentoRecebido")
+  pagamentos_estornados Pagamento[] @relation("PagamentoEstorno")
+  pagamentos_estorno_aprovados Pagamento[] @relation("PagamentoEstornoAprovador")
   caixas_abertos Caixa_sessao[] @relation("CaixaAbertura")
   caixas_fechados Caixa_sessao[] @relation("CaixaFechamento")
   movimentacoes_caixa Movimentacao_caixa[]
   logs_auditoria Log_auditoria[]
+  requisicoes_idempotentes Requisicao_idempotente[]
 }
 
 // =====================================================
@@ -110,6 +119,7 @@ model Categoria {
   nome  String  @unique
   ordem Int     @default(0) // Posição da categoria na tela (arrastar pra ordenar)
   ativo Boolean @default(true)
+  nao_imprime Boolean @default(false) // Água/geladeira: não gera ticket de produção
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -468,9 +478,24 @@ enum Status_impressora {
 
 enum Tipo_documento_impressao {
   PRODUCAO
-  CONTA
+  CANCELAMENTO
+  REIMPRESSAO
+  CONTA // pré-conta
   COMPROVANTE
+  RELATORIO_CAIXA
   TESTE
+}
+
+enum Modo_documento_impressao {
+  AUTOMATICO
+  MANUAL
+  NUNCA
+}
+
+enum Tamanho_letra_producao {
+  NORMAL
+  GRANDE
+  EXTRA
 }
 
 enum Status_trabalho_impressao {
@@ -478,6 +503,16 @@ enum Status_trabalho_impressao {
   IMPRIMINDO
   IMPRESSO
   ERRO
+}
+
+model Config_documento {
+  id   Int                      @id @default(autoincrement())
+  tipo Tipo_documento_impressao @unique // um registro por documento de negócio (sem TESTE)
+  modo Modo_documento_impressao @default(AUTOMATICO)
+  vias Int                      @default(1) // 1..3
+  abre_gaveta Boolean           @default(false)
+
+  updatedAt DateTime @updatedAt
 }
 
 model Impressora {
@@ -496,11 +531,18 @@ model Impressora {
   largura_papel Int @default(80) // 58 ou 80
   colunas       Int @default(48) // ~32 (58mm) / ~48 (80mm)
   codificacao   String @default("CP860")
-  vias          Int    @default(1)
+  vias          Int    @default(1) // legado; vias de negócio vêm de Config_documento
 
   tem_guilhotina Boolean @default(true)
   tem_gaveta     Boolean @default(false)
+  apita          Boolean @default(false)
+  tamanho_letra_producao Tamanho_letra_producao @default(GRANDE)
   ativo          Boolean @default(true)
+
+  // Reserva (failover no próximo passo)
+  impressora_reserva_id Int?
+  impressora_reserva    Impressora?  @relation("ImpressoraReserva", fields: [impressora_reserva_id], references: [id])
+  reservas_de           Impressora[] @relation("ImpressoraReserva")
 
   ultimo_status Status_impressora @default(DESCONHECIDO)
   ultimo_erro   String?
@@ -512,8 +554,10 @@ model Impressora {
   categorias Impressora_categoria[]
   trabalhos  Trabalho_impressao[]
 
-  configs_conta Configuracao[] @relation("ConfigConta")
-  configs_caixa Configuracao[] @relation("ConfigCaixa")
+  configs_padrao   Configuracao[] @relation("ConfigPadrao")
+  configs_producao Configuracao[] @relation("ConfigProducao")
+  configs_conta    Configuracao[] @relation("ConfigConta")
+  configs_caixa    Configuracao[] @relation("ConfigCaixa")
 }
 
 model Impressora_categoria {
@@ -534,6 +578,12 @@ model Trabalho_impressao {
   status         Status_trabalho_impressao @default(PENDENTE)
   tentativas     Int                       @default(0)
   ultimo_erro    String?
+  proxima_tentativa_em DateTime?
+  via_numero     Int                       @default(1) // 1-based; retry só desta via
+
+  documento_origem_id Int?
+  documento_origem    Trabalho_impressao?  @relation("TrabalhoOrigem", fields: [documento_origem_id], references: [id])
+  derivados           Trabalho_impressao[] @relation("TrabalhoOrigem")
 
   criado_em   DateTime  @default(now())
   impresso_em DateTime?
@@ -622,6 +672,13 @@ model Pagamento {
 
   criado_em DateTime @default(now())
 
+  estornado_em         DateTime?
+  estorno_motivo       String?
+  estorno_usuario_id   Int?
+  estorno_usuario      Usuario? @relation("PagamentoEstorno", fields: [estorno_usuario_id], references: [id])
+  estorno_aprovador_id Int?
+  estorno_aprovador    Usuario? @relation("PagamentoEstornoAprovador", fields: [estorno_aprovador_id], references: [id])
+
   atendimento_id Int
   atendimento    Atendimento @relation(fields: [atendimento_id], references: [id])
 
@@ -632,7 +689,20 @@ model Pagamento {
   caixa_sessao    Caixa_sessao @relation(fields: [caixa_sessao_id], references: [id])
 
   usuario_id Int // Quem recebeu
-  usuario    Usuario @relation(fields: [usuario_id], references: [id])
+  usuario    Usuario @relation("PagamentoRecebido", fields: [usuario_id], references: [id])
+}
+
+model Requisicao_idempotente {
+  id            Int      @id @default(autoincrement())
+  chave         String
+  rota          String
+  usuario_id    Int
+  usuario       Usuario  @relation(fields: [usuario_id], references: [id])
+  resposta_json String
+  status_http   Int
+  criado_em     DateTime @default(now())
+
+  @@unique([chave, usuario_id, rota])
 }
 
 model Log_auditoria {

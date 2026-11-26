@@ -58,6 +58,8 @@ export async function rotasImpressoras(app: FastifyInstance) {
       vias?: number;
       tem_guilhotina?: boolean;
       tem_gaveta?: boolean;
+      apita?: boolean;
+      tamanho_letra_producao?: "NORMAL" | "GRANDE" | "EXTRA";
       categoria_ids?: number[];
     };
 
@@ -97,6 +99,8 @@ export async function rotasImpressoras(app: FastifyInstance) {
         vias: body.vias && body.vias > 0 ? Math.round(body.vias) : 1,
         tem_guilhotina: body.tem_guilhotina ?? true,
         tem_gaveta: body.tem_gaveta ?? false,
+        apita: body.apita ?? false,
+        tamanho_letra_producao: body.tamanho_letra_producao ?? "GRANDE",
         ultimo_status: "DESCONHECIDO",
       },
     });
@@ -137,7 +141,10 @@ export async function rotasImpressoras(app: FastifyInstance) {
       vias?: number;
       tem_guilhotina?: boolean;
       tem_gaveta?: boolean;
+      apita?: boolean;
+      tamanho_letra_producao?: "NORMAL" | "GRANDE" | "EXTRA";
       ativo?: boolean;
+      confirmar_desativar?: boolean;
     };
 
     const data: Record<string, unknown> = {};
@@ -164,9 +171,37 @@ export async function rotasImpressoras(app: FastifyInstance) {
     if (body.vias !== undefined) data.vias = Math.max(1, Math.round(body.vias));
     if (body.tem_guilhotina !== undefined) data.tem_guilhotina = body.tem_guilhotina;
     if (body.tem_gaveta !== undefined) data.tem_gaveta = body.tem_gaveta;
+    if (body.apita !== undefined) data.apita = body.apita;
+    if (body.tamanho_letra_producao !== undefined) {
+      if (!["NORMAL", "GRANDE", "EXTRA"].includes(body.tamanho_letra_producao)) {
+        return reply.code(400).send({ erro: "tamanho_letra_producao inválido" });
+      }
+      data.tamanho_letra_producao = body.tamanho_letra_producao;
+    }
     if (body.ativo !== undefined) {
+      if (body.ativo === false && atual.ativo) {
+        const cfg = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
+        const usos: string[] = [];
+        if (cfg?.impressora_padrao_id === id) usos.push("impressora padrão da loja");
+        if (cfg?.impressora_producao_id === id) usos.push("impressora de produção padrão");
+        if (cfg?.impressora_conta_id === id) usos.push("impressora da pré-conta");
+        if (cfg?.impressora_caixa_id === id) usos.push("impressora do caixa");
+        const cats = await prisma.impressora_categoria.count({ where: { impressora_id: id } });
+        if (cats) usos.push(`${cats} categoria(s) de produção`);
+        if (usos.length && !body.confirmar_desativar) {
+          return reply.code(409).send({
+            erro: "Impressora é destino de documentos. Confirme a desativação.",
+            passa_para_padrao: usos,
+            precisa_confirmar: true,
+          });
+        }
+      }
       data.ativo = body.ativo;
-      data.ultimo_status = body.ativo ? atual.ultimo_status === "INATIVA" ? "DESCONHECIDO" : atual.ultimo_status : "INATIVA";
+      data.ultimo_status = body.ativo
+        ? atual.ultimo_status === "INATIVA"
+          ? "DESCONHECIDO"
+          : atual.ultimo_status
+        : "INATIVA";
     }
 
     return prisma.impressora.update({

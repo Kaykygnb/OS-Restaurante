@@ -12,6 +12,7 @@ export default function Caixa() {
 
   const [sessao, setSessao] = useState<any>(null);
   const [aberto, setAberto] = useState(false);
+  const [temGaveta, setTemGaveta] = useState(false);
   const [fundo, setFundo] = useState("0");
   const [movTipo, setMovTipo] = useState<"SANGRIA" | "SUPRIMENTO">("SUPRIMENTO");
   const [movValor, setMovValor] = useState("");
@@ -25,9 +26,14 @@ export default function Caixa() {
   const carregar = useCallback(async () => {
     setErro("");
     try {
-      const r = (await api("/caixa/atual")) as { aberto: boolean; sessao: any };
+      const r = (await api("/caixa/atual")) as {
+        aberto: boolean;
+        sessao: any;
+        tem_gaveta_disponivel?: boolean;
+      };
       setAberto(r.aberto);
       setSessao(r.sessao);
+      setTemGaveta(Boolean(r.tem_gaveta_disponivel));
     } catch (e) {
       setErro((e as Error).message);
     }
@@ -188,17 +194,19 @@ export default function Caixa() {
             </button>
           </form>
 
-          <div className="drawer-bloco">
-            <button type="button" className="btn-sec" disabled={busy} onClick={() => void gaveta()}>
-              Abrir gaveta (sem venda)
-            </button>
-            {!podeGestao ? (
-              <label className="campo" style={{ marginTop: 8 }}>
-                <span>PIN (se precisar)</span>
-                <input value={pin} onChange={(e) => setPin(e.target.value)} type="password" />
-              </label>
-            ) : null}
-          </div>
+          {temGaveta ? (
+            <div className="drawer-bloco">
+              <button type="button" className="btn-sec" disabled={busy} onClick={() => void gaveta()}>
+                Abrir gaveta (sem venda)
+              </button>
+              {!podeGestao ? (
+                <label className="campo" style={{ marginTop: 8 }}>
+                  <span>PIN (se precisar)</span>
+                  <input value={pin} onChange={(e) => setPin(e.target.value)} type="password" />
+                </label>
+              ) : null}
+            </div>
+          ) : null}
 
           {podeGestao ? (
             <div className="drawer-bloco">

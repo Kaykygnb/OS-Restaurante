@@ -47,6 +47,8 @@ export default function Mesas() {
   const [mesaFoco, setMesaFoco] = useState<Mesa | null>(null);
   const [detalheId, setDetalheId] = useState<number | null>(null);
   const [detalhe, setDetalhe] = useState<any>(null);
+  const [cancelModal, setCancelModal] = useState(false);
+  const [motivoCancel, setMotivoCancel] = useState("");
 
   const [tipoNovo, setTipoNovo] = useState<TipoAtendimento>("MESA");
   const [clienteNome, setClienteNome] = useState("");
@@ -86,6 +88,9 @@ export default function Mesas() {
   async function abrirDetalhe(id: number) {
     setErro("");
     setOk("");
+    setDetalhe(null);
+    setMesaTransferir("");
+    setDestinoJuntar("");
     setDetalheId(id);
     setPainel("detalhe");
     try {
@@ -108,18 +113,6 @@ export default function Mesas() {
     setDetalheId(null);
     setErro("");
     setOk("");
-  }
-
-  function abrirNovaGeral(tipo: TipoAtendimento = "BALCAO") {
-    setMesaFoco(null);
-    setTipoNovo(tipo);
-    setClienteNome("");
-    setClienteTel("");
-    setClienteEnd("");
-    setObs("");
-    setPainel("abrir");
-    setDetalhe(null);
-    setDetalheId(null);
   }
 
   async function criarAtendimento(e: React.FormEvent) {
@@ -192,17 +185,18 @@ export default function Mesas() {
     }
   }
 
-  async function cancelarConta() {
+  async function confirmarCancelarConta() {
     if (!detalheId) return;
-    const motivo = prompt("Motivo do cancelamento (opcional se sem pedidos):") ?? "";
     setSalvando(true);
     setErro("");
     try {
       await api(`/atendimentos/${detalheId}/cancelar`, {
         method: "POST",
-        body: JSON.stringify({ motivo }),
+        body: JSON.stringify({ motivo: motivoCancel.trim() }),
       });
       setOk("Atendimento cancelado");
+      setCancelModal(false);
+      setMotivoCancel("");
       setPainel(null);
       setDetalhe(null);
       await carregar();
@@ -511,12 +505,61 @@ export default function Mesas() {
               ) : null}
 
               <div className="form-acoes">
-                <button type="button" className="btn-ghost" disabled={salvando} onClick={() => void cancelarConta()}>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={salvando}
+                  onClick={() => {
+                    setMotivoCancel("");
+                    setCancelModal(true);
+                  }}
+                >
                   Cancelar conta
                 </button>
               </div>
             </div>
           </aside>
+        ) : null}
+
+        {cancelModal ? (
+          <div className="modal-fundo" role="dialog" aria-modal="true" aria-labelledby="cancel-conta-titulo">
+            <div className="modal-caixa">
+              <h3 id="cancel-conta-titulo">Cancelar esta conta?</h3>
+              <p className="ajuda">
+                Isso encerra o atendimento{detalhe?.codigo_atendimento ? ` ${detalhe.codigo_atendimento}` : ""}.
+                Confirme só se for isso mesmo.
+              </p>
+              <label className="campo">
+                <span>Motivo (opcional se sem pedidos)</span>
+                <input
+                  value={motivoCancel}
+                  onChange={(e) => setMotivoCancel(e.target.value)}
+                  autoFocus
+                />
+              </label>
+              <div className="form-acoes">
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  disabled={salvando}
+                  onClick={() => {
+                    setCancelModal(false);
+                    setMotivoCancel("");
+                  }}
+                >
+                  Desistir
+                </button>
+                <button
+                  type="button"
+                  className="btn-prim"
+                  disabled={salvando}
+                  onClick={() => void confirmarCancelarConta()}
+                >
+                  Confirmar cancelamento
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {painel === "gestao" && podeGestao ? (

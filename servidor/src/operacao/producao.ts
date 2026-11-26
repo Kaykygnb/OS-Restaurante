@@ -1,4 +1,11 @@
 import { prisma } from "../db.js";
+import {
+  configDocumento,
+  deveImprimirAgora,
+  impressorasProducaoDoPedido,
+  resolverDestinosProducao,
+  type ImpressoraDestino,
+} from "../impressao/destino.js";
 import { documentoProducao } from "../impressao/documentos.js";
 import { enfileirarTrabalho } from "../impressao/fila.js";
 
@@ -11,11 +18,57 @@ export type ItemRoteavel = {
   escolhas: { nome_opcao: string; quantidade: number }[];
   adicionais: { nome_adicional: string; quantidade: number }[];
   produto_variante: {
-    produto: { exige_preparo: boolean; categoria_id: number };
+    produto: { exige_preparo: boolean; categoria_id: number; nao_imprime?: boolean };
   };
 };
 
-/** Agrupa itens de preparo por impressora; sem mapa → impressora da conta + aviso. */
+export type ResultadoImpressao = {
+  status: "OK" | "SEM_DESTINO" | "NUNCA" | "ERRO" | "VAZIO";
+  trabalhos: number[];
+  avisos: string[];
+};
+
+function mapItensCupom(itens: ItemRoteavel[]) {
+  return itens.map((i) => ({
+    quantidade: i.quantidade,
+    nome: i.nome_produto,
+    observacao: i.observacao,
+    escolhas: i.escolhas.map((e) =>
+      e.quantidade > 1 ? `${e.quantidade}x ${e.nome_opcao}` : e.nome_opcao
+    ),
+    adicionais: i.adicionais.map((a) =>
+      a.quantidade > 1 ? `${a.quantidade}x ${a.nome_adicional}` : a.nome_adicional
+    ),
+  }));
+}
+
+async function enfileirarVias(opts: {
+  impressora: ImpressoraDestino;
+  tipo: "PRODUCAO" | "CANCELAMENTO" | "REIMPRESSAO";
+  payload: Buffer;
+  vias: number;
+  pedido_id: number;
+  atendimento_id: number;
+  documento_origem_id?: number | null;
+}) {
+  const ids: number[] = [];
+  const n = Math.min(3, Math.max(1, opts.vias));
+  for (let via = 1; via <= n; via++) {
+    const t = await enfileirarTrabalho({
+      impressora_id: opts.impressora.id,
+      tipo_documento: opts.tipo,
+      conteudo: opts.payload,
+      pedido_id: opts.pedido_id,
+      atendimento_id: opts.atendimento_id,
+      via_numero: via,
+      documento_origem_id: opts.documento_origem_id ?? null,
+    });
+    ids.push(t.id);
+  }
+  return ids;
+}
+
+/** Lançamento / cancelamento / reimpressão de produção. */
 export async function enfileirarProducaoPedido(opts: {
   pedido_id: number;
   codigo_pedido: string;
@@ -25,85 +78,121 @@ export async function enfileirarProducaoPedido(opts: {
   tipo_atendimento: string;
   itens: ItemRoteavel[];
   cancelamento?: boolean;
-}) {
+  reimpressao?: boolean;
+  disparo?: "automatico" | "manual";
+  garcom_nome?: string | null;
+  observacao_atendimento?: string | null;
+  motivo_cancelamento?: string | null;
+  cancelado_por?: string | null;
+  hora_original?: Date | string | null;
+}): Promise<ResultadoImpressao> {
   const avisos: string[] = [];
+  const disparo = opts.disparo ?? (opts.reimpressao ? "manual" : "automatico");
+  const tipoDoc = opts.cancelamento
+    ? "CANCELAMENTO"
+    : opts.reimpressao
+      ? "REIMPRESSAO"
+      : "PRODUCAO";
+
+  const cfgDoc = await configDocumento(tipoDoc);
+  if (!deveImprimirAgora(cfgDoc?.modo, disparo)) {
+    return { status: "NUNCA", trabalhos: [], avisos: [`Documento ${tipoDoc} em modo ${cfgDoc?.modo ?? "NUNCA"}`] };
+  }
+
   const paraImpressao = opts.itens.filter(
-    (i) => i.produto_variante.produto.exige_preparo && (opts.cancelamento ? i.cancelado : !i.cancelado)
+    (i) =>
+      i.produto_variante.produto.exige_preparo &&
+      (opts.cancelamento ? i.cancelado : !i.cancelado)
   );
-  if (!paraImpressao.length) return { trabalhos: [] as number[], avisos };
+  if (!paraImpressao.length) return { status: "VAZIO", trabalhos: [], avisos };
 
-  const config = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
-  const mapa = await prisma.impressora_categoria.findMany({
-    where: { impressora: { ativo: true } },
-    include: { impressora: true },
-  });
+  const vias = cfgDoc?.vias ?? 1;
+  const porImpressora = new Map<
+    number,
+    { impressora: ImpressoraDestino; itens: ItemRoteavel[]; motivo: string }
+  >();
 
-  const porImpressora = new Map<number, { impressora: (typeof mapa)[0]["impressora"]; itens: ItemRoteavel[] }>();
-
-  for (const item of paraImpressao) {
-    const catId = item.produto_variante.produto.categoria_id;
-    const destinos = mapa.filter((m) => m.categoria_id === catId);
-    if (destinos.length) {
-      for (const d of destinos) {
-        const bucket = porImpressora.get(d.impressora_id) ?? {
-          impressora: d.impressora,
-          itens: [],
-        };
-        bucket.itens.push(item);
-        porImpressora.set(d.impressora_id, bucket);
+  // Cancel/reprint: preferir impressoras do job original
+  if (opts.cancelamento || opts.reimpressao) {
+    const originais = await impressorasProducaoDoPedido(opts.pedido_id);
+    if (originais.length) {
+      for (const imp of originais) {
+        porImpressora.set(imp.id, { impressora: imp, itens: [...paraImpressao], motivo: "origem" });
       }
-    } else if (config?.impressora_conta_id) {
-      const imp =
-        mapa.find((m) => m.impressora_id === config.impressora_conta_id)?.impressora ??
-        (await prisma.impressora.findFirst({
-          where: { id: config.impressora_conta_id, ativo: true },
-        }));
-      if (imp) {
-        const bucket = porImpressora.get(imp.id) ?? { impressora: imp, itens: [] };
-        bucket.itens.push(item);
-        porImpressora.set(imp.id, bucket);
-        avisos.push(
-          `"${item.nome_produto}" sem impressora de categoria — enviado para impressora da conta (${imp.nome})`
-        );
-      } else {
-        avisos.push(`"${item.nome_produto}" sem impressora de produção nem impressora da conta`);
-      }
-    } else {
-      avisos.push(
-        `"${item.nome_produto}" sem impressora de categoria e sem impressora da conta configurada`
-      );
     }
   }
 
+  if (!porImpressora.size) {
+    for (const item of paraImpressao) {
+      const catId = item.produto_variante.produto.categoria_id;
+      const dest = await resolverDestinosProducao(catId);
+      if (dest.pular) {
+        avisos.push(`"${item.nome_produto}" não imprime (categoria)`);
+        continue;
+      }
+      if (!dest.impressoras.length) {
+        avisos.push(`"${item.nome_produto}" sem impressora de destino`);
+        continue;
+      }
+      for (const imp of dest.impressoras) {
+        const bucket = porImpressora.get(imp.id) ?? {
+          impressora: imp,
+          itens: [],
+          motivo: dest.motivo,
+        };
+        bucket.itens.push(item);
+        porImpressora.set(imp.id, bucket);
+        if (dest.motivo !== "categoria") {
+          avisos.push(`"${item.nome_produto}" → ${imp.nome} (${dest.motivo})`);
+        }
+      }
+    }
+  }
+
+  if (!porImpressora.size) {
+    return { status: "SEM_DESTINO", trabalhos: [], avisos: [...new Set(avisos)] };
+  }
+
   const trabalhos: number[] = [];
+  const origemJob = await prisma.trabalho_impressao.findFirst({
+    where: { pedido_id: opts.pedido_id, tipo_documento: "PRODUCAO" },
+    orderBy: { criado_em: "asc" },
+  });
+
   for (const { impressora, itens } of porImpressora.values()) {
     const payload = documentoProducao(impressora, {
       codigo_pedido: opts.codigo_pedido,
       codigo_atendimento: opts.codigo_atendimento,
       mesa: opts.mesa_numero != null ? String(opts.mesa_numero) : null,
       tipo_atendimento: opts.tipo_atendimento,
-      cancelamento: opts.cancelamento,
-      itens: itens.map((i) => ({
-        quantidade: i.quantidade,
-        nome: i.nome_produto,
-        observacao: i.observacao,
-        escolhas: i.escolhas.map((e) =>
-          e.quantidade > 1 ? `${e.quantidade}x ${e.nome_opcao}` : e.nome_opcao
-        ),
-        adicionais: i.adicionais.map((a) =>
-          a.quantidade > 1 ? `${a.quantidade}x ${a.nome_adicional}` : a.nome_adicional
-        ),
-      })),
+      setor: impressora.nome,
+      garcom_nome: opts.garcom_nome ?? null,
+      observacao_atendimento: opts.observacao_atendimento ?? null,
+      cancelamento: opts.cancelamento ?? false,
+      reimpressao: opts.reimpressao ?? false,
+      motivo_cancelamento: opts.motivo_cancelamento ?? null,
+      cancelado_por: opts.cancelado_por ?? null,
+      hora_original: opts.hora_original ?? origemJob?.criado_em ?? null,
+      tamanho_letra: impressora.tamanho_letra_producao,
+      apita: impressora.apita,
+      itens: mapItensCupom(itens),
     });
-    const t = await enfileirarTrabalho({
-      impressora_id: impressora.id,
-      tipo_documento: "PRODUCAO",
-      conteudo: payload,
+
+    const ids = await enfileirarVias({
+      impressora,
+      tipo: tipoDoc,
+      payload,
+      vias,
       pedido_id: opts.pedido_id,
       atendimento_id: opts.atendimento_id,
+      documento_origem_id: origemJob?.id ?? null,
     });
-    trabalhos.push(t.id);
+    trabalhos.push(...ids);
   }
 
-  return { trabalhos, avisos: [...new Set(avisos)] };
+  return {
+    status: trabalhos.length ? "OK" : "SEM_DESTINO",
+    trabalhos,
+    avisos: [...new Set(avisos)],
+  };
 }

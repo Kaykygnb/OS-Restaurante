@@ -15,7 +15,7 @@ export async function rotasCategorias(app: FastifyInstance) {
   app.get("/categorias", auth, async (req) => {
     const todas = (req.query as { todas?: string }).todas === "1";
     return prisma.categoria.findMany({
-      where: todas ? undefined : { ativo: true },
+      where: todas ? {} : { ativo: true },
       orderBy: { ordem: "asc" },
       include: includeCount,
     });
@@ -95,7 +95,12 @@ export async function rotasCategorias(app: FastifyInstance) {
   app.put("/categorias/:id", authGestao, async (req, reply) => {
     const id = Number((req.params as any).id);
     if (!Number.isFinite(id)) return reply.code(400).send({ erro: "ID inválido" });
-    const { nome, ordem, ativo } = req.body as { nome?: string; ordem?: number; ativo?: boolean };
+    const { nome, ordem, ativo, nao_imprime } = req.body as {
+      nome?: string;
+      ordem?: number;
+      ativo?: boolean;
+      nao_imprime?: boolean;
+    };
 
     const data: Record<string, unknown> = {};
     if (nome !== undefined) {
@@ -109,6 +114,7 @@ export async function rotasCategorias(app: FastifyInstance) {
     }
     if (ordem !== undefined) data.ordem = ordem;
     if (ativo !== undefined) data.ativo = ativo;
+    if (nao_imprime !== undefined) data.nao_imprime = Boolean(nao_imprime);
 
     try {
       return await prisma.categoria.update({

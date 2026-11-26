@@ -29,6 +29,7 @@ export default function Conta() {
   const [desconto, setDesconto] = useState("");
   const [motivoDesc, setMotivoDesc] = useState("");
   const [pin, setPin] = useState("");
+  const [aprovadorId, setAprovadorId] = useState("");
   const [formaId, setFormaId] = useState("");
   const [valorPag, setValorPag] = useState("");
   const [recebido, setRecebido] = useState("");
@@ -42,7 +43,7 @@ export default function Conta() {
       ]);
       setAt(a);
       setFormas(f);
-      setFormaId((prev) => prev || (f[0] ? String(f[0].id) : ""));
+      // Não pré-seleciona forma: evita "Pagar restante" com um toque na forma errada
       setDesconto(a.desconto_centavos ? (a.desconto_centavos / 100).toFixed(2).replace(".", ",") : "");
       const rest = a.totais?.restante_centavos ?? 0;
       setValorPag(rest > 0 ? (rest / 100).toFixed(2).replace(".", ",") : "");
@@ -94,6 +95,7 @@ export default function Conta() {
           valor_centavos: reaisParaCentavos(desconto || "0"),
           motivo: motivoDesc || null,
           pin: pin || undefined,
+          aprovador_id: aprovadorId ? Number(aprovadorId) : undefined,
         }),
       });
       setOk("Desconto salvo");
@@ -121,11 +123,26 @@ export default function Conta() {
 
   async function pagar(e?: React.FormEvent, valorOverride?: number) {
     e?.preventDefault();
+    if (!formaId) {
+      setErro("Escolha a forma de pagamento");
+      return;
+    }
+    const valor = valorOverride ?? reaisParaCentavos(valorPag);
+    if (!Number.isFinite(valor) || valor <= 0) {
+      setErro("Informe o valor");
+      return;
+    }
+    const nomeForma = forma?.nome ?? "pagamento";
+    if (
+      !confirm(
+        `Receber ${formatarReais(valor)} em ${nomeForma}?`
+      )
+    ) {
+      return;
+    }
     setBusy(true);
     setErro("");
     try {
-      const valor = valorOverride ?? reaisParaCentavos(valorPag);
-      if (!Number.isFinite(valor) || valor <= 0) throw new Error("Informe o valor");
       await api(`/atendimentos/${id}/pagamentos`, {
         method: "POST",
         body: JSON.stringify({
@@ -313,8 +330,23 @@ export default function Conta() {
                     <input value={motivoDesc} onChange={(e) => setMotivoDesc(e.target.value)} />
                   </label>
                   <label className="campo">
+                    <span>ID do aprovador</span>
+                    <input
+                      value={aprovadorId}
+                      onChange={(e) => setAprovadorId(e.target.value)}
+                      inputMode="numeric"
+                      autoComplete="off"
+                    />
+                  </label>
+                  <label className="campo">
                     <span>PIN gerente</span>
-                    <input type="password" value={pin} onChange={(e) => setPin(e.target.value)} />
+                    <input
+                      type="password"
+                      value={pin}
+                      onChange={(e) => setPin(e.target.value)}
+                      inputMode="numeric"
+                      autoComplete="off"
+                    />
                   </label>
                   <button type="button" className="btn-sec" disabled={busy} onClick={() => void salvarDesconto()}>
                     Aplicar desconto

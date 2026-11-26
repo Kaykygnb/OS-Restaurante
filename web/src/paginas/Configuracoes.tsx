@@ -27,11 +27,22 @@ type Config = {
   caminho_logo?: string | null;
   mensagem_cupom?: string | null;
   taxa_entrega_centavos?: number;
+  impressora_padrao_id?: number | null;
+  impressora_producao_id?: number | null;
   impressora_conta_id?: number | null;
   impressora_caixa_id?: number | null;
+  usa_tela_cozinha?: boolean;
 };
 
-type CategoriaOpt = { id: number; nome: string };
+type ConfigDocumento = {
+  id: number;
+  tipo: string;
+  modo: "AUTOMATICO" | "MANUAL" | "NUNCA";
+  vias: number;
+  abre_gaveta: boolean;
+};
+
+type CategoriaOpt = { id: number; nome: string; nao_imprime?: boolean };
 
 type ImpSistema = {
   nome: string;
@@ -53,6 +64,8 @@ type Impressora = {
   vias: number;
   tem_guilhotina: boolean;
   tem_gaveta: boolean;
+  apita?: boolean;
+  tamanho_letra_producao?: "NORMAL" | "GRANDE" | "EXTRA";
   ativo: boolean;
   ultimo_status: "DESCONHECIDO" | "ONLINE" | "ERRO" | "INATIVA";
   ultimo_erro: string | null;
@@ -72,6 +85,8 @@ type FormImp = {
   vias: string;
   tem_guilhotina: boolean;
   tem_gaveta: boolean;
+  apita: boolean;
+  tamanho_letra_producao: "NORMAL" | "GRANDE" | "EXTRA";
   categoria_ids: number[];
 };
 
@@ -112,6 +127,8 @@ function formImpVazio(): FormImp {
     vias: "1",
     tem_guilhotina: true,
     tem_gaveta: false,
+    apita: false,
+    tamanho_letra_producao: "GRANDE",
     categoria_ids: [],
   };
 }
@@ -129,6 +146,8 @@ function formFromImp(imp: Impressora): FormImp {
     vias: String(imp.vias || 1),
     tem_guilhotina: imp.tem_guilhotina,
     tem_gaveta: imp.tem_gaveta,
+    apita: Boolean(imp.apita),
+    tamanho_letra_producao: imp.tamanho_letra_producao ?? "GRANDE",
     categoria_ids: imp.categorias.map((c) => c.categoria_id),
   };
 }
@@ -503,8 +522,12 @@ function AbaImpressoras({
   const [form, setForm] = useState<FormImp>(formImpVazio);
   const [salvando, setSalvando] = useState(false);
   const [testando, setTestando] = useState(false);
+  const [padraoId, setPadraoId] = useState<string>("");
+  const [producaoId, setProducaoId] = useState<string>("");
   const [contaId, setContaId] = useState<string>("");
   const [caixaId, setCaixaId] = useState<string>("");
+  const [usaTelaCozinha, setUsaTelaCozinha] = useState(true);
+  const [docs, setDocs] = useState<ConfigDocumento[]>([]);
   const [configurado, setConfigurado] = useState(false);
   const [salvandoRota, setSalvandoRota] = useState(false);
 
@@ -529,18 +552,23 @@ function AbaImpressoras({
     setCarregando(true);
     setErro("");
     try {
-      const [imps, ativas, cats, cfg] = await Promise.all([
+      const [imps, ativas, cats, cfg, docsRes] = await Promise.all([
         api(`/impressoras?ativos=${filtro}`) as Promise<Impressora[]>,
         api("/impressoras?ativos=1") as Promise<Impressora[]>,
         api("/categorias") as Promise<CategoriaOpt[]>,
         api("/configuracoes") as Promise<Config>,
+        api("/config-documentos") as Promise<ConfigDocumento[]>,
       ]);
       setLista(imps);
       setAtivasOpts(ativas);
-      setCategorias(cats.map((c) => ({ id: c.id, nome: c.nome })));
+      setCategorias(cats.map((c) => ({ id: c.id, nome: c.nome, nao_imprime: c.nao_imprime })));
       setConfigurado(Boolean(cfg.configurado));
+      setPadraoId(cfg.impressora_padrao_id != null ? String(cfg.impressora_padrao_id) : "");
+      setProducaoId(cfg.impressora_producao_id != null ? String(cfg.impressora_producao_id) : "");
       setContaId(cfg.impressora_conta_id != null ? String(cfg.impressora_conta_id) : "");
       setCaixaId(cfg.impressora_caixa_id != null ? String(cfg.impressora_caixa_id) : "");
+      setUsaTelaCozinha(cfg.usa_tela_cozinha !== false);
+      setDocs(docsRes ?? []);
       void carregarSistema();
     } catch (e) {
       setErro((e as Error).message);
@@ -622,6 +650,8 @@ function AbaImpressoras({
         vias,
         tem_guilhotina: form.tem_guilhotina,
         tem_gaveta: form.tem_gaveta,
+        apita: form.apita,
+        tamanho_letra_producao: form.tamanho_letra_producao,
       };
 
       let id = editId;
@@ -728,16 +758,48 @@ function AbaImpressoras({
       await api("/configuracoes", {
         method: "PUT",
         body: JSON.stringify({
+          impressora_padrao_id: padraoId ? Number(padraoId) : null,
+          impressora_producao_id: producaoId ? Number(producaoId) : null,
           impressora_conta_id: contaId ? Number(contaId) : null,
           impressora_caixa_id: caixaId ? Number(caixaId) : null,
+          usa_tela_cozinha: usaTelaCozinha,
         }),
       });
-      setOk("Roteamento global salvo");
+      setOk("Destinos da loja salvos");
       await carregar();
     } catch (err) {
       setErro((err as Error).message);
     } finally {
       setSalvandoRota(false);
+    }
+  }
+
+  async function salvarDoc(doc: ConfigDocumento, patch: Partial<ConfigDocumento>) {
+    setErro("");
+    try {
+      const up = (await api(`/config-documentos/${doc.tipo}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      })) as ConfigDocumento;
+      setDocs((lista) => lista.map((d) => (d.tipo === up.tipo ? up : d)));
+      setOk(`Documento ${doc.tipo} atualizado`);
+    } catch (err) {
+      setErro((err as Error).message);
+    }
+  }
+
+  async function toggleNaoImprime(cat: CategoriaOpt) {
+    try {
+      await api(`/categorias/${cat.id}`, {
+        method: "PUT",
+        body: JSON.stringify({ nao_imprime: !cat.nao_imprime }),
+      });
+      setCategorias((lista) =>
+        lista.map((c) => (c.id === cat.id ? { ...c, nao_imprime: !c.nao_imprime } : c))
+      );
+      setOk(`Categoria ${cat.nome}: ${!cat.nao_imprime ? "não imprime" : "imprime"}`);
+    } catch (err) {
+      setErro((err as Error).message);
     }
   }
 
@@ -755,18 +817,40 @@ function AbaImpressoras({
         <div className="config-roteamento-cab">
           <div>
             <p className="bloco-variante-titulo titulo-com-ajuda" style={{ margin: 0 }}>
-              Roteamento global
-              <Ajuda texto="Pré-conta e comprovante/gaveta usam estas impressoras. Produção (cozinha/bar) usa as categorias marcadas em cada impressora." />
+              Destinos da loja
+              <Ajuda texto="Ordem: categoria → produção padrão → padrão da loja. Conta → caixa → padrão. Comprovante/relatório → caixa → padrão." />
             </p>
             <p className="ajuda" style={{ margin: "4px 0 0" }}>
-              Usado quando módulos de pedido e pagamento existirem.
+              Com impressoras ativas, a padrão da loja é obrigatória.
             </p>
           </div>
           <button type="submit" className="btn-sec" disabled={salvandoRota || !configurado}>
-            {salvandoRota ? "Salvando…" : "Salvar roteamento"}
+            {salvandoRota ? "Salvando…" : "Salvar destinos"}
           </button>
         </div>
         <div className="config-grid-2">
+          <label className="campo">
+            <span>Impressora padrão da loja</span>
+            <select value={padraoId} onChange={(e) => setPadraoId(e.target.value)} required={ativasOpts.length > 0}>
+              <option value="">— nenhuma —</option>
+              {ativasOpts.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.nome}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="campo">
+            <span>Produção padrão (opcional)</span>
+            <select value={producaoId} onChange={(e) => setProducaoId(e.target.value)}>
+              <option value="">— nenhuma —</option>
+              {ativasOpts.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.nome}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="campo">
             <span>Impressora da pré-conta</span>
             <select value={contaId} onChange={(e) => setContaId(e.target.value)}>
@@ -779,7 +863,7 @@ function AbaImpressoras({
             </select>
           </label>
           <label className="campo">
-            <span>Impressora do caixa (comprovante / gaveta)</span>
+            <span>Impressora do caixa</span>
             <select value={caixaId} onChange={(e) => setCaixaId(e.target.value)}>
               <option value="">— nenhuma —</option>
               {ativasOpts.map((i) => (
@@ -790,7 +874,78 @@ function AbaImpressoras({
             </select>
           </label>
         </div>
+        <label className="campo-check" style={{ marginTop: 12 }}>
+          <input
+            type="checkbox"
+            checked={usaTelaCozinha}
+            onChange={(e) => setUsaTelaCozinha(e.target.checked)}
+          />
+          <span>Usa tela de cozinha</span>
+        </label>
       </form>
+
+      <section className="painel-bloco" style={{ marginTop: 16 }}>
+        <p className="bloco-variante-titulo">Documentos</p>
+        <p className="ajuda">Modo, vias (1–3) e gaveta (só comprovante/relatório de caixa).</p>
+        <div className="tabela-docs">
+          {docs.map((d) => (
+            <div key={d.tipo} className="config-grid-2" style={{ alignItems: "end", marginBottom: 10 }}>
+              <strong>{d.tipo}</strong>
+              <select
+                value={d.modo}
+                onChange={(e) =>
+                  void salvarDoc(d, { modo: e.target.value as ConfigDocumento["modo"] })
+                }
+              >
+                <option value="AUTOMATICO">Automático</option>
+                <option value="MANUAL">Manual</option>
+                <option value="NUNCA">Nunca</option>
+              </select>
+              <label className="campo">
+                <span>Vias</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={3}
+                  value={d.vias}
+                  onChange={(e) =>
+                    void salvarDoc(d, { vias: Math.min(3, Math.max(1, Number(e.target.value) || 1)) })
+                  }
+                />
+              </label>
+              {d.tipo === "COMPROVANTE" || d.tipo === "RELATORIO_CAIXA" ? (
+                <label className="campo-check">
+                  <input
+                    type="checkbox"
+                    checked={d.abre_gaveta}
+                    onChange={(e) => void salvarDoc(d, { abre_gaveta: e.target.checked })}
+                  />
+                  <span>Abre gaveta</span>
+                </label>
+              ) : (
+                <span className="ajuda">Sem gaveta</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="painel-bloco" style={{ marginTop: 16 }}>
+        <p className="bloco-variante-titulo">Categorias que não imprimem</p>
+        <p className="ajuda">Água/geladeira: ticket de produção não é gerado.</p>
+        <div className="imp-cats">
+          {categorias.map((c) => (
+            <label key={c.id} className="campo-check">
+              <input
+                type="checkbox"
+                checked={Boolean(c.nao_imprime)}
+                onChange={() => void toggleNaoImprime(c)}
+              />
+              <span>{c.nome}</span>
+            </label>
+          ))}
+        </div>
+      </section>
 
       <div className={`cardapio-grid-3${painelAberto ? " com-painel" : ""}`}>
         <section className="painel-bloco painel-lista" style={{ gridColumn: painelAberto ? undefined : "1 / -1" }}>
@@ -1048,12 +1203,36 @@ function AbaImpressoras({
                   />
                   <span>Tem gaveta de dinheiro</span>
                 </label>
+                <label className="campo-check">
+                  <input
+                    type="checkbox"
+                    checked={form.apita}
+                    onChange={(e) => setForm((f) => ({ ...f, apita: e.target.checked }))}
+                  />
+                  <span>Apita ao imprimir</span>
+                </label>
+                <label className="campo">
+                  <span>Letra da produção</span>
+                  <select
+                    value={form.tamanho_letra_producao}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        tamanho_letra_producao: e.target.value as FormImp["tamanho_letra_producao"],
+                      }))
+                    }
+                  >
+                    <option value="NORMAL">Normal</option>
+                    <option value="GRANDE">Grande</option>
+                    <option value="EXTRA">Extra</option>
+                  </select>
+                </label>
               </div>
 
               <div className="drawer-bloco">
                 <p className="bloco-variante-titulo titulo-com-ajuda">
                   Categorias de produção
-                  <Ajuda texto="Itens com preparo dessas categorias serão enviados a esta impressora (quando o módulo de pedidos existir)." />
+                  <Ajuda texto="Itens com preparo dessas categorias vão para esta impressora (cozinha/bar)." />
                 </p>
                 {categorias.length === 0 ? (
                   <p className="ajuda">Nenhuma categoria ativa no cardápio.</p>

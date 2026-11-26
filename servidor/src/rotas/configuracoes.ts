@@ -20,9 +20,21 @@ type BodyConfig = {
   caminho_logo?: string | null;
   mensagem_cupom?: string | null;
   taxa_entrega_centavos?: number;
+  impressora_padrao_id?: number | null;
+  impressora_producao_id?: number | null;
   impressora_conta_id?: number | null;
   impressora_caixa_id?: number | null;
+  usa_tela_cozinha?: boolean;
 };
+
+const TIPOS_DOC = [
+  "PRODUCAO",
+  "CANCELAMENTO",
+  "REIMPRESSAO",
+  "CONTA",
+  "COMPROVANTE",
+  "RELATORIO_CAIXA",
+] as const;
 
 function camposEditaveis(body: BodyConfig) {
   const data: Record<string, unknown> = {};
@@ -44,8 +56,11 @@ function camposEditaveis(body: BodyConfig) {
     "caminho_logo",
     "mensagem_cupom",
     "taxa_entrega_centavos",
+    "impressora_padrao_id",
+    "impressora_producao_id",
     "impressora_conta_id",
     "impressora_caixa_id",
+    "usa_tela_cozinha",
   ];
   for (const key of keys) {
     if (body[key] !== undefined) data[key] = body[key];
@@ -62,19 +77,59 @@ async function validarImpressoraId(id: number | null | undefined, label: string)
 }
 
 export async function rotasConfiguracoes(app: FastifyInstance) {
-  // ROOT e ADMIN gerenciam os dados do restaurante
   const auth = {
     onRequest: [(app as any).autenticar, soTipos("ROOT", "ADMIN")],
   };
 
-  // Ler (singleton). Sem registro ainda → configurado: false (front monta formulário vazio)
   app.get("/configuracoes", auth, async () => {
     const config = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
     if (!config) return { configurado: false as const };
     return { configurado: true as const, ...config };
   });
 
-  // Criar ou atualizar (ROOT pode deixar pronto; ADMIN configura depois)
+  app.get("/config-documentos", auth, async () => {
+    return prisma.config_documento.findMany({ orderBy: { tipo: "asc" } });
+  });
+
+  app.put("/config-documentos/:tipo", auth, async (req, reply) => {
+    const tipo = String((req.params as any).tipo ?? "").toUpperCase();
+    if (!TIPOS_DOC.includes(tipo as any)) {
+      return reply.code(400).send({ erro: "Tipo de documento inválido" });
+    }
+    const body = req.body as { modo?: string; vias?: number; abre_gaveta?: boolean };
+    const data: Record<string, unknown> = {};
+    if (body.modo !== undefined) {
+      if (!["AUTOMATICO", "MANUAL", "NUNCA"].includes(body.modo)) {
+        return reply.code(400).send({ erro: "modo inválido" });
+      }
+      data.modo = body.modo;
+    }
+    if (body.vias !== undefined) {
+      const v = Math.round(Number(body.vias));
+      if (!Number.isFinite(v) || v < 1 || v > 3) {
+        return reply.code(400).send({ erro: "vias deve ser 1 a 3" });
+      }
+      data.vias = v;
+    }
+    if (body.abre_gaveta !== undefined) {
+      if (!["COMPROVANTE", "RELATORIO_CAIXA"].includes(tipo) && body.abre_gaveta) {
+        return reply.code(400).send({ erro: "Este documento não abre gaveta" });
+      }
+      data.abre_gaveta = Boolean(body.abre_gaveta);
+    }
+    const up = await prisma.config_documento.upsert({
+      where: { tipo: tipo as any },
+      create: {
+        tipo: tipo as any,
+        modo: (data.modo as any) ?? "AUTOMATICO",
+        vias: (data.vias as number) ?? 1,
+        abre_gaveta: (data.abre_gaveta as boolean) ?? false,
+      },
+      update: data,
+    });
+    return up;
+  });
+
   app.put("/configuracoes", auth, async (req, reply) => {
     const body = req.body as BodyConfig;
     const data = camposEditaveis(body);
@@ -92,18 +147,30 @@ export async function rotasConfiguracoes(app: FastifyInstance) {
       data.uf = uf;
     }
 
-    if (body.impressora_conta_id !== undefined) {
-      const err = await validarImpressoraId(body.impressora_conta_id, "Impressora da pré-conta");
-      if (err) return reply.code(400).send({ erro: err });
-      data.impressora_conta_id = body.impressora_conta_id;
-    }
-    if (body.impressora_caixa_id !== undefined) {
-      const err = await validarImpressoraId(body.impressora_caixa_id, "Impressora do caixa");
-      if (err) return reply.code(400).send({ erro: err });
-      data.impressora_caixa_id = body.impressora_caixa_id;
+    for (const [campo, label] of [
+      ["impressora_padrao_id", "Impressora padrão"],
+      ["impressora_producao_id", "Impressora de produção"],
+      ["impressora_conta_id", "Impressora da pré-conta"],
+      ["impressora_caixa_id", "Impressora do caixa"],
+    ] as const) {
+      if (body[campo] !== undefined) {
+        const err = await validarImpressoraId(body[campo], label);
+        if (err) return reply.code(400).send({ erro: err });
+        data[campo] = body[campo];
+      }
     }
 
+    const qtdAtivas = await prisma.impressora.count({ where: { ativo: true } });
     const existente = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
+    const padraoFinal =
+      body.impressora_padrao_id !== undefined
+        ? body.impressora_padrao_id
+        : existente?.impressora_padrao_id ?? null;
+    if (qtdAtivas > 0 && !padraoFinal) {
+      return reply.code(400).send({
+        erro: "Com impressoras cadastradas, informe a impressora padrão da loja",
+      });
+    }
 
     if (!existente) {
       const nome = body.nome_restaurante?.trim();

@@ -3,6 +3,9 @@ import { imprimirRede } from "./rede.js";
 import { imprimirSistema } from "./sistema.js";
 
 const MAX_TENTATIVAS = 5;
+/** Espera crescente: 2s, 10s, 30s, 1min, 5min */
+const BACKOFF_MS = [2_000, 10_000, 30_000, 60_000, 300_000];
+
 let rodando = false;
 let timer: NodeJS.Timeout | null = null;
 
@@ -24,11 +27,29 @@ async function enviarParaImpressora(
   await imprimirSistema(impressora.nome_sistema, dados);
 }
 
+function proximaTentativaEm(tentativasAposFalha: number): Date {
+  const idx = Math.min(Math.max(0, tentativasAposFalha - 1), BACKOFF_MS.length - 1);
+  return new Date(Date.now() + BACKOFF_MS[idx]!);
+}
+
+/** Recupera trabalhos presos se o servidor caiu no meio da impressão. */
+export async function recuperarTrabalhosPresos() {
+  const r = await prisma.trabalho_impressao.updateMany({
+    where: { status: "IMPRIMINDO" },
+    data: { status: "PENDENTE", proxima_tentativa_em: null },
+  });
+  if (r.count > 0) {
+    console.info(`[fila-impressao] recuperou ${r.count} trabalho(s) presos em IMPRIMINDO`);
+  }
+}
+
 async function processarUm() {
+  const agora = new Date();
   const trabalho = await prisma.trabalho_impressao.findFirst({
     where: {
       status: { in: ["PENDENTE", "ERRO"] },
       tentativas: { lt: MAX_TENTATIVAS },
+      OR: [{ proxima_tentativa_em: null }, { proxima_tentativa_em: { lte: agora } }],
     },
     orderBy: { criado_em: "asc" },
     include: { impressora: true },
@@ -41,6 +62,7 @@ async function processarUm() {
         status: "ERRO",
         ultimo_erro: "Impressora inativa",
         tentativas: { increment: 1 },
+        proxima_tentativa_em: proximaTentativaEm(trabalho.tentativas + 1),
       },
     });
     return true;
@@ -53,11 +75,8 @@ async function processarUm() {
 
   try {
     const bytes = Buffer.from(trabalho.conteudo);
-    // vias: reenvia o mesmo payload N vezes
-    const vias = Math.max(1, trabalho.impressora.vias || 1);
-    for (let i = 0; i < vias; i++) {
-      await enviarParaImpressora(trabalho.impressora, bytes);
-    }
+    // Um trabalho = uma via; retry reimprime só esta via
+    await enviarParaImpressora(trabalho.impressora, bytes);
 
     await prisma.$transaction([
       prisma.trabalho_impressao.update({
@@ -67,6 +86,7 @@ async function processarUm() {
           impresso_em: new Date(),
           ultimo_erro: null,
           tentativas: { increment: 1 },
+          proxima_tentativa_em: null,
         },
       }),
       prisma.impressora.update({
@@ -80,13 +100,16 @@ async function processarUm() {
     ]);
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Erro ao imprimir";
+    const tentativas = trabalho.tentativas + 1;
     await prisma.$transaction([
       prisma.trabalho_impressao.update({
         where: { id: trabalho.id },
         data: {
           status: "ERRO",
           ultimo_erro: msg,
-          tentativas: { increment: 1 },
+          tentativas,
+          proxima_tentativa_em:
+            tentativas < MAX_TENTATIVAS ? proximaTentativaEm(tentativas) : null,
         },
       }),
       prisma.impressora.update({
@@ -107,7 +130,6 @@ async function tick() {
   if (rodando) return;
   rodando = true;
   try {
-    // processa até 3 por ciclo
     for (let i = 0; i < 3; i++) {
       const houve = await processarUm();
       if (!houve) break;
@@ -128,10 +150,19 @@ export function iniciarFilaImpressao(intervaloMs = 2000) {
 
 export async function enfileirarTrabalho(opts: {
   impressora_id: number;
-  tipo_documento: "PRODUCAO" | "CONTA" | "COMPROVANTE" | "TESTE";
+  tipo_documento:
+    | "PRODUCAO"
+    | "CANCELAMENTO"
+    | "REIMPRESSAO"
+    | "CONTA"
+    | "COMPROVANTE"
+    | "RELATORIO_CAIXA"
+    | "TESTE";
   conteudo: Buffer;
   pedido_id?: number | null;
   atendimento_id?: number | null;
+  via_numero?: number;
+  documento_origem_id?: number | null;
 }) {
   return prisma.trabalho_impressao.create({
     data: {
@@ -140,6 +171,8 @@ export async function enfileirarTrabalho(opts: {
       conteudo: new Uint8Array(opts.conteudo),
       pedido_id: opts.pedido_id ?? null,
       atendimento_id: opts.atendimento_id ?? null,
+      via_numero: opts.via_numero ?? 1,
+      documento_origem_id: opts.documento_origem_id ?? null,
       status: "PENDENTE",
     },
   });
@@ -156,7 +189,14 @@ export async function imprimirAgora(
     vias: number;
     ativo: boolean;
   },
-  tipo: "TESTE" | "COMPROVANTE" | "CONTA" | "PRODUCAO",
+  tipo:
+    | "TESTE"
+    | "COMPROVANTE"
+    | "CONTA"
+    | "PRODUCAO"
+    | "CANCELAMENTO"
+    | "REIMPRESSAO"
+    | "RELATORIO_CAIXA",
   conteudo: Buffer
 ) {
   if (!impressora.ativo) throw new Error("Impressora inativa");
@@ -168,10 +208,7 @@ export async function imprimirAgora(
   });
 
   try {
-    const vias = Math.max(1, impressora.vias || 1);
-    for (let i = 0; i < vias; i++) {
-      await enviarParaImpressora(impressora, conteudo);
-    }
+    await enviarParaImpressora(impressora, conteudo);
     await prisma.$transaction([
       prisma.trabalho_impressao.update({
         where: { id: trabalho.id },
@@ -197,7 +234,12 @@ export async function imprimirAgora(
     await prisma.$transaction([
       prisma.trabalho_impressao.update({
         where: { id: trabalho.id },
-        data: { status: "ERRO", tentativas: 1, ultimo_erro: msg },
+        data: {
+          status: "ERRO",
+          tentativas: 1,
+          ultimo_erro: msg,
+          proxima_tentativa_em: proximaTentativaEm(1),
+        },
       }),
       prisma.impressora.update({
         where: { id: impressora.id },

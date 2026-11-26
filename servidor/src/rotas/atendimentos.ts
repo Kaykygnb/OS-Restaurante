@@ -3,7 +3,7 @@ import { prisma } from "../db.js";
 import { soTipos, type TipoUsuario } from "../permissoes.js";
 import { registrarAuditoria } from "../operacao/auditoria.js";
 import { proximoCodigo } from "../operacao/sequencia.js";
-import { totalAtendimentoAberto } from "../operacao/totais.js";
+import { calcularTotaisAtendimento, pagoEfetivoCentavos } from "../operacao/totais-atendimento.js";
 
 const TIPOS = new Set(["BALCAO", "RETIRADA", "ENTREGA", "MESA"]);
 
@@ -36,31 +36,22 @@ const includeDetalhe = {
   },
 };
 
-function montarResposta(at: any) {
-  const itens = at.pedidos.flatMap((p: any) => p.itens);
-  const pago = (at.pagamentos as any[]).reduce((s, p) => s + p.valor_centavos, 0);
-  const totais =
-    at.status === "FECHADO" && at.total_centavos != null
-      ? {
-          subtotal_centavos: at.subtotal_centavos,
-          total_centavos: at.total_centavos,
-          pago_centavos: pago,
-          restante_centavos: Math.max(0, (at.total_centavos as number) - pago),
-          congelado: true,
-        }
-      : {
-          ...totalAtendimentoAberto({
-            itens,
-            desconto_centavos: at.desconto_centavos,
-            acrescimo_centavos: at.acrescimo_centavos,
-            taxa_servico_centavos: at.taxa_servico_centavos,
-            taxa_entrega_centavos: at.taxa_entrega_centavos,
-            pago_centavos: pago,
-          }),
-          congelado: false,
-        };
-
-  return { ...at, totais };
+async function montarResposta(at: any) {
+  const pago = pagoEfetivoCentavos(at.pagamentos as any[]);
+  if (at.status === "FECHADO" && at.total_centavos != null) {
+    return {
+      ...at,
+      totais: {
+        subtotal_centavos: at.subtotal_centavos,
+        total_centavos: at.total_centavos,
+        pago_centavos: pago,
+        restante_centavos: Math.max(0, (at.total_centavos as number) - pago),
+        congelado: true,
+      },
+    };
+  }
+  const totais = await calcularTotaisAtendimento(at);
+  return { ...at, totais: { ...totais, congelado: false } };
 }
 
 export async function rotasAtendimentos(app: FastifyInstance) {
@@ -94,7 +85,7 @@ export async function rotasAtendimentos(app: FastifyInstance) {
     if (!Number.isFinite(id)) return reply.code(400).send({ erro: "ID inválido" });
     const at = await prisma.atendimento.findUnique({ where: { id }, include: includeDetalhe });
     if (!at) return reply.code(404).send({ erro: "Atendimento não encontrado" });
-    return montarResposta(at);
+    return await montarResposta(at);
   });
 
   app.post("/atendimentos", authOps, async (req, reply) => {
@@ -115,6 +106,7 @@ export async function rotasAtendimentos(app: FastifyInstance) {
     const usuario_id = Number((req.user as any).id);
     let mesa_id: number | null = body.mesa_id != null ? Number(body.mesa_id) : null;
     let taxa_entrega = 0;
+    let mesaNumero: number | null = null;
 
     if (tipo === "MESA") {
       if (!mesa_id || !Number.isFinite(mesa_id)) {
@@ -122,14 +114,7 @@ export async function rotasAtendimentos(app: FastifyInstance) {
       }
       const mesa = await prisma.mesa.findUnique({ where: { id: mesa_id } });
       if (!mesa || !mesa.ativo) return reply.code(404).send({ erro: "Mesa não encontrada" });
-      const ocupada = await prisma.atendimento.findFirst({
-        where: { mesa_id, status: "ABERTO" },
-      });
-      if (ocupada) {
-        return reply.code(409).send({
-          erro: `Mesa ${mesa.numero} já tem atendimento aberto (${ocupada.codigo_atendimento})`,
-        });
-      }
+      mesaNumero = mesa.numero;
     } else {
       mesa_id = null;
     }
@@ -142,23 +127,50 @@ export async function rotasAtendimentos(app: FastifyInstance) {
       }
     }
 
-    const criado = await prisma.$transaction(async (tx) => {
-      const codigo = await proximoCodigo(tx, "ATENDIMENTO", "AT");
-      return tx.atendimento.create({
-        data: {
-          codigo_atendimento: codigo,
-          tipo_atendimento: tipo as any,
-          usuario_id,
-          mesa_id,
-          cliente_nome: body.cliente_nome?.trim() || null,
-          cliente_telefone: body.cliente_telefone?.trim() || null,
-          cliente_endereco: body.cliente_endereco?.trim() || null,
-          observacao: body.observacao?.trim() || null,
-          taxa_entrega_centavos: taxa_entrega,
-        },
-        include: includeDetalhe,
+    let criado;
+    try {
+      criado = await prisma.$transaction(async (tx) => {
+        if (mesa_id != null) {
+          const ocupada = await tx.atendimento.findFirst({
+            where: { mesa_id, status: "ABERTO" },
+          });
+          if (ocupada) {
+            throw Object.assign(
+              new Error(
+                `Mesa ${mesaNumero} já tem atendimento aberto (${ocupada.codigo_atendimento})`
+              ),
+              { status: 409 }
+            );
+          }
+        }
+        const codigo = await proximoCodigo(tx, "ATENDIMENTO", "AT");
+        return tx.atendimento.create({
+          data: {
+            codigo_atendimento: codigo,
+            tipo_atendimento: tipo as any,
+            usuario_id,
+            mesa_id,
+            cliente_nome: body.cliente_nome?.trim() || null,
+            cliente_telefone: body.cliente_telefone?.trim() || null,
+            cliente_endereco: body.cliente_endereco?.trim() || null,
+            observacao: body.observacao?.trim() || null,
+            taxa_entrega_centavos: taxa_entrega,
+          },
+          include: includeDetalhe,
+        });
       });
-    });
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : "Falha ao abrir atendimento";
+      if (err?.status === 409 || /UNIQUE|atendimento_mesa_aberta/i.test(msg)) {
+        return reply.code(409).send({
+          erro:
+            err?.status === 409
+              ? msg
+              : `Mesa ${mesaNumero ?? ""} já tem atendimento aberto`,
+        });
+      }
+      return reply.code(400).send({ erro: msg });
+    }
 
     await registrarAuditoria(prisma, {
       usuario_id,
@@ -168,7 +180,7 @@ export async function rotasAtendimentos(app: FastifyInstance) {
       detalhes: { codigo: criado.codigo_atendimento, tipo, mesa_id },
     });
 
-    return reply.code(201).send(montarResposta(criado));
+    return reply.code(201).send(await montarResposta(criado));
   });
 
   app.put("/atendimentos/:id", authOps, async (req, reply) => {
@@ -202,7 +214,7 @@ export async function rotasAtendimentos(app: FastifyInstance) {
       data,
       include: includeDetalhe,
     });
-    return montarResposta(atualizado);
+    return await montarResposta(atualizado);
   });
 
   app.post("/atendimentos/:id/transferir", authOps, async (req, reply) => {
@@ -226,33 +238,42 @@ export async function rotasAtendimentos(app: FastifyInstance) {
       return reply.code(400).send({ erro: "Atendimento já está nesta mesa" });
     }
 
-    const ocupada = await prisma.atendimento.findFirst({
-      where: { mesa_id, status: "ABERTO", id: { not: id } },
-    });
-    if (ocupada) {
-      return reply.code(409).send({
-        erro: `Mesa ${mesa.numero} ocupada (${ocupada.codigo_atendimento})`,
+    const usuario_id = Number((req.user as any).id);
+    let atualizado;
+    try {
+      atualizado = await prisma.$transaction(async (tx) => {
+        const ocupada = await tx.atendimento.findFirst({
+          where: { mesa_id, status: "ABERTO", id: { not: id } },
+        });
+        if (ocupada) {
+          throw Object.assign(
+            new Error(`Mesa ${mesa.numero} ocupada (${ocupada.codigo_atendimento})`),
+            { status: 409 }
+          );
+        }
+        const up = await tx.atendimento.update({
+          where: { id },
+          data: { mesa_id },
+          include: includeDetalhe,
+        });
+        await registrarAuditoria(tx, {
+          usuario_id,
+          acao: "TRANSFERIR_MESA",
+          entidade: "Atendimento",
+          entidade_id: id,
+          detalhes: { de: at.mesa_id, para: mesa_id },
+        });
+        return up;
       });
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : "Falha ao transferir";
+      if (err?.status === 409 || /UNIQUE|atendimento_mesa_aberta/i.test(msg)) {
+        return reply.code(409).send({ erro: msg });
+      }
+      return reply.code(400).send({ erro: msg });
     }
 
-    const usuario_id = Number((req.user as any).id);
-    const atualizado = await prisma.$transaction(async (tx) => {
-      const up = await tx.atendimento.update({
-        where: { id },
-        data: { mesa_id },
-        include: includeDetalhe,
-      });
-      await registrarAuditoria(tx, {
-        usuario_id,
-        acao: "TRANSFERIR_MESA",
-        entidade: "Atendimento",
-        entidade_id: id,
-        detalhes: { de: at.mesa_id, para: mesa_id },
-      });
-      return up;
-    });
-
-    return montarResposta(atualizado);
+    return await montarResposta(atualizado);
   });
 
   app.post("/atendimentos/:id/juntar", authGestao, async (req, reply) => {
@@ -328,7 +349,7 @@ export async function rotasAtendimentos(app: FastifyInstance) {
       return tx.atendimento.findUnique({ where: { id: destino_id }, include: includeDetalhe });
     });
 
-    return montarResposta(resultado);
+    return await montarResposta(resultado);
   });
 
   app.post("/atendimentos/:id/cancelar", authOps, async (req, reply) => {
@@ -377,6 +398,6 @@ export async function rotasAtendimentos(app: FastifyInstance) {
       return up;
     });
 
-    return montarResposta(atualizado);
+    return await montarResposta(atualizado);
   });
 }
