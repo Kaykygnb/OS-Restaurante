@@ -40,6 +40,87 @@ function podeVerUsuarios(tipo?: string) {
   return Boolean(tipo && TIPOS_GESTAO.has(tipo));
 }
 
+const APROVAM = new Set<string>(["ROOT", "ADMIN", "GERENTE"]);
+
+/** PIN de aprovação (desconto, sangria, gaveta). Sem ele, nenhuma aprovação por PIN funciona. */
+function BlocoPin({
+  usuarioId,
+  nome,
+  proprio,
+  onOk,
+  onErro,
+}: {
+  usuarioId: number;
+  nome: string;
+  proprio: boolean;
+  onOk: (m: string) => void;
+  onErro: (m: string) => void;
+}) {
+  const [pin, setPin] = useState("");
+  const [confirmar, setConfirmar] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const valido = /^\d{4,8}$/.test(pin) && pin === confirmar;
+
+  async function salvar(e: React.FormEvent) {
+    e.preventDefault();
+    if (!/^\d{4,8}$/.test(pin)) return onErro("O PIN precisa ter de 4 a 8 números");
+    if (pin !== confirmar) return onErro("O PIN e a confirmação não são iguais");
+    setSalvando(true);
+    try {
+      await api(`/usuarios/${usuarioId}/pin`, {
+        method: "PUT",
+        body: JSON.stringify({ pin, confirmar_pin: confirmar }),
+      });
+      onOk(proprio ? "Seu PIN de aprovação foi definido" : `PIN de aprovação de ${nome} definido`);
+      setPin("");
+      setConfirmar("");
+    } catch (err) {
+      onErro((err as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  const soNumeros = (v: string) => v.replace(/\D/g, "").slice(0, 8);
+
+  return (
+    <form className="bloco-escolhas" onSubmit={salvar} autoComplete="off">
+      <p className="bloco-variante-titulo titulo-com-ajuda">
+        PIN de aprovação
+        <Ajuda texto="O gerente digita este PIN no aparelho do garçom para aprovar desconto, sangria e abrir a gaveta. Não é a senha de login." />
+      </p>
+      <p className="ajuda" style={{ marginTop: 0 }}>
+        Nº do gerente para aprovar: <strong>{usuarioId}</strong>
+      </p>
+      <label className="campo">
+        <span>Novo PIN (4 a 8 números)</span>
+        <input
+          type="password"
+          value={pin}
+          onChange={(e) => setPin(soNumeros(e.target.value))}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={8}
+        />
+      </label>
+      <label className="campo">
+        <span>Repita o PIN</span>
+        <input
+          type="password"
+          value={confirmar}
+          onChange={(e) => setConfirmar(soNumeros(e.target.value))}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          maxLength={8}
+        />
+      </label>
+      <button type="submit" className="btn-sec" disabled={salvando || !valido}>
+        {salvando ? "Salvando…" : "Definir PIN"}
+      </button>
+    </form>
+  );
+}
+
 export default function Usuarios() {
   const sessao = lerUsuario();
   if (!podeVerUsuarios(sessao?.tipo)) {
@@ -90,6 +171,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
   }, [filtro]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga de dados da tela (fetch)
     void carregar();
   }, [carregar]);
 
@@ -320,6 +402,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                   <strong>{u.nome}</strong>
                   <span className="prod-meta">
                     @{u.login}
+                    {APROVAM.has(u.tipo_usuario) ? ` · nº ${u.id}` : ""}
                     {u.email ? ` · ${u.email}` : ""}
                     {u.telefone ? ` · ${u.telefone}` : ""}
                   </span>
@@ -459,6 +542,16 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                 </button>
               </div>
             </form>
+
+            {modo === "editar" && editando && APROVAM.has(editando.tipo_usuario) && editando.ativo ? (
+              <BlocoPin
+                usuarioId={editando.id}
+                nome={editando.nome}
+                proprio={editando.id === meuId}
+                onOk={setOk}
+                onErro={setErro}
+              />
+            ) : null}
 
             {modo === "editar" && editId && editId !== meuId ? (
               <form className="bloco-escolhas" onSubmit={redefinirSenha}>
