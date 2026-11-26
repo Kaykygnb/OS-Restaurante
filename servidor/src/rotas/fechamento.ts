@@ -359,7 +359,7 @@ export async function rotasFechamento(app: FastifyInstance) {
     if (!tipoPodeAprovarSemPin(tipo)) {
       const aprov = await validarPinGerente(body.pin, body.aprovador_id);
       if (!aprov) {
-        return reply.code(403).send({ erro: "Estorno exige PIN de GERENTE+ (aprovador_id e pin)" });
+        return reply.code(403).send({ erro: "O estorno precisa do PIN de um gerente.", codigo: "pin_invalido" });
       }
       aprovadorId = aprov.id;
     }
@@ -532,6 +532,7 @@ export async function rotasFechamento(app: FastifyInstance) {
           status: err?.status ?? 400,
           corpo: {
             erro: err instanceof Error ? err.message : "Falha ao fechar",
+            ...(err?.codigo ? { codigo: err.codigo } : {}),
             ...(err?.totais ? { totais: err.totais } : {}),
           },
         };

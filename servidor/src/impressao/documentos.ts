@@ -47,6 +47,7 @@ export function documentoProducao(
     codigo_atendimento: string;
     mesa?: string | null;
     tipo_atendimento?: string;
+    numero_dia?: number | null;
     setor?: string | null;
     garcom_nome?: string | null;
     observacao_atendimento?: string | null;
@@ -68,6 +69,7 @@ export function documentoProducao(
     codigo_atendimento: opts.codigo_atendimento,
     mesa: opts.mesa ?? null,
     tipo_atendimento: opts.tipo_atendimento ?? "",
+    numero_dia: opts.numero_dia ?? null,
     setor: opts.setor ?? impressora.nome ?? null,
     garcom_nome: opts.garcom_nome ?? null,
     observacao_atendimento: opts.observacao_atendimento ?? null,

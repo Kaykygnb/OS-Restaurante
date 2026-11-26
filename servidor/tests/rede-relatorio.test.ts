@@ -163,6 +163,6 @@ test("atendente sem caixa não vende rápido e o caixa aberto sobrevive a outro 
     url: "/caixa/atual",
     headers: { authorization: `Bearer ${token}` },
   });
-  assert.equal(caixa.json().aberto, true);
-  assert.equal("valor_esperado_centavos" in (caixa.json().sessao ?? {}), false);
+  assert.equal(caixa.statusCode, 403);
+  assert.equal(caixa.json().codigo, "sem_permissao_caixa");
 });

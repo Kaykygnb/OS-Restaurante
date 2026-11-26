@@ -229,6 +229,104 @@ export async function rotasRelatorios(app: FastifyInstance) {
       .filter((item): item is { produto_variante_id: number; nome: string; dias_sem_venda: number | null } => item != null)
       .sort((a, b) => (b.dias_sem_venda ?? 99999) - (a.dias_sem_venda ?? 99999));
 
+    const [anoRel, mesRel] = de.split("-").map(Number);
+    const mesPrev = mesRel === 1 ? 12 : (mesRel ?? 1) - 1;
+    const anoPrev = mesRel === 1 ? (anoRel ?? 2026) - 1 : (anoRel ?? 2026);
+    const inicioLargo = inicioCivil(`${anoPrev}-${String(mesPrev).padStart(2, "0")}-01`);
+    const largos = await prisma.atendimento.findMany({
+      where: { status: "FECHADO", fechado_em: { gte: inicioLargo, lt: fim } },
+      select: { fechado_em: true, total_centavos: true },
+    });
+    const porDiaLargo = new Map<string, { faturamento_centavos: number; atendimentos: number }>();
+    for (const conta of largos) {
+      if (!conta.fechado_em) continue;
+      const dia = diaCivil(conta.fechado_em);
+      const bucket = porDiaLargo.get(dia) ?? { faturamento_centavos: 0, atendimentos: 0 };
+      bucket.faturamento_centavos += conta.total_centavos ?? 0;
+      bucket.atendimentos += 1;
+      porDiaLargo.set(dia, bucket);
+    }
+    const vazio = () => ({ faturamento_centavos: 0, atendimentos: 0 });
+    const somarDiasChave = (dias: string[]) =>
+      dias.reduce((acc, dia) => {
+        const bucket = porDiaLargo.get(dia);
+        acc.faturamento_centavos += bucket?.faturamento_centavos ?? 0;
+        acc.atendimentos += bucket?.atendimentos ?? 0;
+        return acc;
+      }, vazio());
+    const diasIntervalo = (inicioIso: string, fimIso: string) => {
+      const dias: string[] = [];
+      let cursor = inicioIso;
+      while (cursor <= fimIso) {
+        dias.push(cursor);
+        cursor = somarDias(cursor, 1);
+      }
+      return dias;
+    };
+    const semanaDe = (iso: string) => {
+      const base = inicioCivil(iso);
+      const nome = new Intl.DateTimeFormat("en-US", { timeZone: FUSO, weekday: "short" }).format(
+        new Date(base.getTime() + 3_600_000)
+      );
+      const idx: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      const diaSem = idx[nome] ?? 0;
+      const delta = diaSem === 0 ? 6 : diaSem - 1;
+      return somarDias(iso, -delta);
+    };
+    const por_dia_comparado = diasIntervalo(de, ate).map((dia) => {
+      const anterior = somarDias(dia, -1);
+      return { dia, ... (porDiaLargo.get(dia) ?? vazio()), anterior: { dia: anterior, ...(porDiaLargo.get(anterior) ?? vazio()) } };
+    });
+    const semanas = new Set(diasIntervalo(de, ate).map(semanaDe));
+    const por_semana = [...semanas].map((inicioSemana) => {
+      const fimSemana = somarDias(inicioSemana, 6);
+      const inicioAnt = somarDias(inicioSemana, -7);
+      return {
+        inicio: inicioSemana,
+        fim: fimSemana,
+        ...somarDiasChave(diasIntervalo(inicioSemana, fimSemana)),
+        anterior: { inicio: inicioAnt, fim: somarDias(inicioAnt, 6), ...somarDiasChave(diasIntervalo(inicioAnt, somarDias(inicioAnt, 6))) },
+      };
+    });
+    const meses = new Set(diasIntervalo(de, ate).map((dia) => dia.slice(0, 7)));
+    const por_mes = [...meses].map((mes) => {
+      const [anoM, mesM] = mes.split("-").map(Number);
+      const inicioMes = `${mes}-01`;
+      const ultimo = new Date(Date.UTC(anoM ?? 2026, mesM ?? 1, 0)).getUTCDate();
+      const fimMes = `${mes}-${String(ultimo).padStart(2, "0")}`;
+      const mesAnteriorNum = mesM === 1 ? 12 : (mesM ?? 1) - 1;
+      const anoAnteriorNum = mesM === 1 ? (anoM ?? 2026) - 1 : anoM ?? 2026;
+      const mesAntTxt = `${anoAnteriorNum}-${String(mesAnteriorNum).padStart(2, "0")}`;
+      const ultimoAnt = new Date(Date.UTC(anoAnteriorNum, mesAnteriorNum, 0)).getUTCDate();
+      return {
+        inicio: inicioMes,
+        fim: fimMes,
+        ...somarDiasChave(diasIntervalo(inicioMes, fimMes)),
+        anterior: {
+          inicio: `${mesAntTxt}-01`,
+          fim: `${mesAntTxt}-${String(ultimoAnt).padStart(2, "0")}`,
+          ...somarDiasChave(diasIntervalo(`${mesAntTxt}-01`, `${mesAntTxt}-${String(ultimoAnt).padStart(2, "0")}`)),
+        },
+      };
+    });
+    const funcionarios = new Map<number, { nome: string; cancelamentos_qtd: number; cancelamentos_centavos: number; descontos_qtd: number; descontos_centavos: number }>();
+    for (const [usuario_id, info] of cancelamentos) {
+      if (!usuario_id) continue;
+      const atualFun = funcionarios.get(usuario_id) ?? { nome: info.nome, cancelamentos_qtd: 0, cancelamentos_centavos: 0, descontos_qtd: 0, descontos_centavos: 0 };
+      atualFun.cancelamentos_qtd += info.qtd;
+      atualFun.cancelamentos_centavos += info.valor_centavos;
+      if (info.nome) atualFun.nome = info.nome;
+      funcionarios.set(usuario_id, atualFun);
+    }
+    for (const [usuario_id, info] of descontos) {
+      if (!usuario_id) continue;
+      const atualFun = funcionarios.get(usuario_id) ?? { nome: info.nome, cancelamentos_qtd: 0, cancelamentos_centavos: 0, descontos_qtd: 0, descontos_centavos: 0 };
+      atualFun.descontos_qtd += info.qtd;
+      atualFun.descontos_centavos += info.valor_centavos;
+      if (!atualFun.nome) atualFun.nome = info.nome;
+      funcionarios.set(usuario_id, atualFun);
+    }
+
     return {
       de,
       ate,
@@ -259,6 +357,8 @@ export async function rotasRelatorios(app: FastifyInstance) {
       })),
       cancelamentos_por_usuario: [...cancelamentos.entries()].map(([usuario_id, info]) => ({ usuario_id, ...info })),
       descontos_por_usuario: [...descontos.entries()].map(([usuario_id, info]) => ({ usuario_id, ...info })),
+      faturamento_agregado: { por_dia: por_dia_comparado, por_semana, por_mes },
+      por_funcionario: [...funcionarios.entries()].map(([usuario_id, info]) => ({ usuario_id, ...info })),
     };
   });
 }

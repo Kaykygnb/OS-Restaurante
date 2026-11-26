@@ -52,6 +52,95 @@ export async function rotasPedidos(app: FastifyInstance) {
     ],
   };
 
+  app.get("/pedidos/cozinha", authCozinha, async (req, reply) => {
+    const estacao = String((req.query as any)?.estacao ?? "").toLowerCase();
+    if (estacao !== "cozinha" && estacao !== "bar") {
+      return reply.code(400).send({ erro: "Informe estacao=cozinha ou estacao=bar.", codigo: "estacao_invalida" });
+    }
+    const cfg = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
+    const atrasoMin = cfg?.kds_atraso_min ?? 15;
+    const impressoras = await prisma.impressora.findMany({
+      where: { ativo: true },
+      include: { categorias: { select: { categoria_id: true } } },
+    });
+    const categorias = new Set<number>();
+    for (const imp of impressoras) {
+      const nome = imp.nome.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+      const marcada = imp.estacao === "cozinha" || imp.estacao === "bar" ? imp.estacao : null;
+      const inferida = marcada ?? (/\bbar\b|drink|bebida/.test(nome) ? "bar" : nome.includes("cozinha") ? "cozinha" : null);
+      if (inferida !== estacao) continue;
+      for (const cat of imp.categorias) categorias.add(cat.categoria_id);
+    }
+    const agora = new Date();
+    const pedidos = await prisma.pedido.findMany({
+      where: { status: { in: ["ENVIADO", "PREPARO", "PRONTO"] } },
+      orderBy: { createdAt: "asc" },
+      take: 100,
+      include: {
+        atendimento: {
+          select: {
+            id: true,
+            codigo_atendimento: true,
+            tipo_atendimento: true,
+            numero_dia: true,
+            mesa: { select: { numero: true } },
+          },
+        },
+        itens: {
+          include: {
+            escolhas: true,
+            adicionais: true,
+            produto_variante: {
+              select: {
+                produto: {
+                  select: {
+                    exige_preparo: true,
+                    categoria_id: true,
+                    categoria: { select: { nao_imprime: true, nome: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const lista = pedidos
+      .map((pedido) => {
+        const minutos = Math.floor((agora.getTime() - pedido.createdAt.getTime()) / 60_000);
+        return {
+          id: pedido.id,
+          codigo_pedido: pedido.codigo_pedido,
+          status: pedido.status,
+          criado_em: pedido.createdAt.toISOString(),
+          minutos_decorridos: minutos,
+          atrasado: minutos >= atrasoMin,
+          atendimento: pedido.atendimento,
+          itens: pedido.itens
+            .filter((item) => {
+              const prod = item.produto_variante.produto;
+              if (!prod.exige_preparo || prod.categoria.nao_imprime || item.cancelado) return false;
+              return categorias.has(prod.categoria_id);
+            })
+            .map((item) => ({
+              id: item.id,
+              nome_produto: item.nome_produto,
+              quantidade: item.quantidade,
+              observacao: item.observacao,
+              escolhas: item.escolhas.map((e) => ({ nome_opcao: e.nome_opcao, quantidade: e.quantidade })),
+              adicionais: item.adicionais.map((a) => ({ nome_adicional: a.nome_adicional, quantidade: a.quantidade })),
+            })),
+        };
+      })
+      .filter((pedido) => pedido.itens.length > 0);
+    return {
+      estacao,
+      atraso_min: atrasoMin,
+      agora_servidor: agora.toISOString(),
+      pedidos: lista,
+    };
+  });
+
   app.get("/pedidos", authCozinha, async (req) => {
     const status = String((req.query as any)?.status ?? "ABERTOS").toUpperCase();
     const where: Record<string, unknown> = {};
@@ -178,6 +267,7 @@ export async function rotasPedidos(app: FastifyInstance) {
           mesa_numero: at.mesa?.numero ?? null,
           tipo_atendimento: at.tipo_atendimento,
           itens: resultado.itens as any,
+          numero_dia: at.numero_dia,
           disparo: "automatico",
           garcom_nome: garcom?.nome ?? null,
           observacao_atendimento: at.observacao,
@@ -291,7 +381,7 @@ export async function rotasPedidos(app: FastifyInstance) {
         if (!aprov) {
           return {
             status: 403,
-            corpo: { erro: "Cancelar pedido exige PIN de GERENTE+ (aprovador_id e pin)" },
+            corpo: { erro: "Cancelar o pedido precisa do PIN de um gerente.", codigo: "pin_invalido" },
           };
         }
         aprovadorId = aprov.id;
@@ -414,6 +504,14 @@ export async function rotasPedidos(app: FastifyInstance) {
         return { status: 400, corpo: { erro: "Atendimento não está aberto" } };
       }
 
+      const tipo = (req.user as any).tipo as TipoUsuario;
+      const pinBody = (req.body ?? {}) as { pin?: string; aprovador_id?: number };
+      if (!tipoPodeAprovarSemPin(tipo)) {
+        const aprov = await validarPinGerente(pinBody.pin, pinBody.aprovador_id);
+        if (!aprov) {
+          return { status: 403, corpo: { erro: "Cancelar o item precisa do PIN de um gerente.", codigo: "pin_invalido" } };
+        }
+      }
       const usuario_id = Number((req.user as any).id);
       const atualizado = await prisma.pedido_item.update({
         where: { id },

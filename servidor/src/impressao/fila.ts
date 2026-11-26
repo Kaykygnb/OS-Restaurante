@@ -1,6 +1,17 @@
 import { prisma } from "../db.js";
+import { publicar } from "../eventos/barramento.js";
 import { imprimirRede } from "./rede.js";
 import { imprimirSistema } from "./sistema.js";
+
+function papelImpressora(status: string | null | undefined) {
+  if (status === "ONLINE") return "ok";
+  if (status === "ERRO") return "erro";
+  return "sem_resposta";
+}
+
+function avisarImpressora(id: number, antes: string | null | undefined, depois: "ONLINE" | "ERRO") {
+  if (papelImpressora(antes) !== papelImpressora(depois)) publicar("impressora.status", id);
+}
 
 const MAX_TENTATIVAS = 5;
 /** Espera crescente: 2s, 10s, 30s, 1min, 5min */
@@ -99,6 +110,7 @@ async function processarUm(impressoraId?: number) {
         },
       }),
     ]);
+    avisarImpressora(trabalho.impressora_id, trabalho.impressora.ultimo_status, "ONLINE");
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Erro ao imprimir";
     const tentativas = trabalho.tentativas + 1;
@@ -122,6 +134,7 @@ async function processarUm(impressoraId?: number) {
         },
       }),
     ]);
+    avisarImpressora(trabalho.impressora_id, trabalho.impressora.ultimo_status, "ERRO");
   }
 
   return true;
@@ -204,6 +217,10 @@ export async function imprimirAgora(
   conteudo: Buffer
 ) {
   if (!impressora.ativo) throw new Error("Impressora inativa");
+  const antes = await prisma.impressora.findUnique({
+    where: { id: impressora.id },
+    select: { ultimo_status: true },
+  });
 
   const trabalho = await enfileirarTrabalho({
     impressora_id: impressora.id,
@@ -232,6 +249,7 @@ export async function imprimirAgora(
         },
       }),
     ]);
+    avisarImpressora(impressora.id, antes?.ultimo_status, "ONLINE");
     return { trabalho_id: trabalho.id, ok: true as const };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Erro ao imprimir";
@@ -254,6 +272,7 @@ export async function imprimirAgora(
         },
       }),
     ]);
+    avisarImpressora(impressora.id, antes?.ultimo_status, "ERRO");
     throw new Error(msg);
   }
 }

@@ -68,6 +68,7 @@ model Configuracao {
   alerta_dif_caixa_centavos Int @default(1000)
   alerta_cancelamentos Int @default(3)
   alerta_cancelamentos_min Int @default(60)
+  kds_atraso_min Int @default(15)
 
   // Impressoras padrão (roteamento global)
   impressora_padrao_id   Int? // Fallback da loja (obrigatória se houver impressoras)
@@ -400,6 +401,7 @@ model Atendimento {
   taxa_entrega_origem String?
   taxa_entrega_calculada_centavos Int?
   numero_dia Int?
+  dia_operacao String?
   conta_pedida_em DateTime?
 
   // Totais congelados só no FECHAR (relatórios)
@@ -589,6 +591,7 @@ model Config_documento {
 model Impressora {
   id   Int    @id @default(autoincrement())
   nome String // ex: Cozinha, Bar, Caixa
+  estacao String? // cozinha | bar, para o KDS
 
   tipo_conexao Tipo_conexao_impressora @default(REDE)
 

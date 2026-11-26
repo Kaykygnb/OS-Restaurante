@@ -2,6 +2,19 @@ import type { FastifyInstance } from "fastify";
 import { prisma } from "../db.js";
 import { soTipos } from "../permissoes.js";
 
+type AtalhoMaisVendido = {
+  posicao: number;
+  produto_id: number;
+  produto_variante_id: number;
+  nome: string;
+  variante_nome: string;
+  preco_centavos: number;
+  qtd_vendida: number;
+  esgotado: boolean;
+};
+
+const cacheMaisVendidos = new Map<string, { expira: number; dados: AtalhoMaisVendido[] }>();
+
 type VarianteInput = { nome?: string; preco_centavos?: number };
 
 const includeVariantes = {
@@ -68,6 +81,79 @@ export async function rotasProdutos(app: FastifyInstance) {
     onRequest: [(app as any).autenticar, soTipos("ROOT", "ADMIN", "GERENTE")],
   };
 
+  const authOps = {
+    onRequest: [(app as any).autenticar, soTipos("ROOT", "ADMIN", "GERENTE", "ATENDENTE")],
+  };
+
+  app.get("/produtos/mais-vendidos", authOps, async (req) => {
+    const limite = Math.min(50, Math.max(1, Number((req.query as { limite?: string }).limite ?? 9) || 9));
+    const dias = Math.min(365, Math.max(1, Number((req.query as { dias?: string }).dias ?? 30) || 30));
+    const chave = `${limite}:${dias}`;
+    const guardado = cacheMaisVendidos.get(chave);
+    if (guardado && guardado.expira > Date.now()) return guardado.dados;
+
+    const desde = new Date(Date.now() - dias * 86_400_000);
+    const vendidos = await prisma.pedido_item.groupBy({
+      by: ["produto_variante_id"],
+      where: {
+        cancelado: false,
+        createdAt: { gte: desde },
+        pedido: { atendimento: { status: { not: "CANCELADO" } } },
+        produto_variante: { ativo: true, produto: { ativo: true } },
+      },
+      _sum: { quantidade: true },
+    });
+    const ids = vendidos.map((v) => v.produto_variante_id);
+    const variantes = ids.length
+      ? await prisma.produto_variante.findMany({
+          where: { id: { in: ids }, ativo: true, produto: { ativo: true } },
+          include: { produto: { select: { id: true, nome: true, esgotado: true } } },
+        })
+      : [];
+    const porId = new Map(variantes.map((v) => [v.id, v]));
+    const ranking = vendidos
+      .map((v) => {
+        const variante = porId.get(v.produto_variante_id);
+        if (!variante) return null;
+        return {
+          produto_id: variante.produto.id,
+          produto_variante_id: variante.id,
+          nome: variante.produto.nome,
+          variante_nome: variante.nome,
+          preco_centavos: variante.preco_centavos,
+          qtd_vendida: v._sum.quantidade ?? 0,
+          esgotado: variante.esgotado || variante.produto.esgotado,
+        };
+      })
+      .filter((item): item is Omit<AtalhoMaisVendido, "posicao"> => item != null)
+      .sort((a, b) => b.qtd_vendida - a.qtd_vendida || a.nome.localeCompare(b.nome, "pt-BR") || a.variante_nome.localeCompare(b.variante_nome, "pt-BR"));
+
+    if (ranking.length < limite) {
+      const usados = new Set(ranking.map((item) => item.produto_variante_id));
+      const complemento = await prisma.produto_variante.findMany({
+        where: { ativo: true, produto: { ativo: true }, id: { notIn: [...usados] } },
+        include: { produto: { select: { id: true, nome: true, esgotado: true } } },
+        orderBy: [{ produto_id: "asc" }, { id: "asc" }],
+        take: limite - ranking.length,
+      });
+      for (const variante of complemento) {
+        ranking.push({
+          produto_id: variante.produto.id,
+          produto_variante_id: variante.id,
+          nome: variante.produto.nome,
+          variante_nome: variante.nome,
+          preco_centavos: variante.preco_centavos,
+          qtd_vendida: 0,
+          esgotado: variante.esgotado || variante.produto.esgotado,
+        });
+      }
+    }
+
+    const dados = ranking.slice(0, limite).map((item, i) => ({ posicao: i + 1, ...item }));
+    cacheMaisVendidos.set(chave, { expira: Date.now() + 10 * 60_000, dados });
+    return dados;
+  });
+
   app.get("/produtos", auth, async (req) => {
     const q = req.query as { categoria_id?: string; todos?: string };
     const categoriaId = q.categoria_id ? Number(q.categoria_id) : undefined;
@@ -84,8 +170,11 @@ export async function rotasProdutos(app: FastifyInstance) {
   });
 
   app.get("/produtos/:id", auth, async (req, reply) => {
-    const id = Number((req.params as any).id);
-    if (!Number.isFinite(id)) return reply.code(400).send({ erro: "ID inválido" });
+    const bruto = String((req.params as { id?: string }).id ?? "");
+    if (!/^\d+$/.test(bruto)) {
+      return reply.code(404).send({ erro: "Produto não encontrado", codigo: "nao_encontrado" });
+    }
+    const id = Number(bruto);
 
     const produto = await prisma.produto.findUnique({
       where: { id },

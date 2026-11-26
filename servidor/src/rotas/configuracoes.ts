@@ -20,6 +20,10 @@ type BodyConfig = {
   caminho_logo?: string | null;
   mensagem_cupom?: string | null;
   taxa_entrega_centavos?: number;
+  taxa_servico_percentual?: number;
+  limite_desconto_sem_pin_centavos?: number;
+  kds_atraso_min?: number;
+  usa_gaveta?: boolean;
   impressora_padrao_id?: number | null;
   impressora_producao_id?: number | null;
   impressora_conta_id?: number | null;
@@ -56,6 +60,10 @@ function camposEditaveis(body: BodyConfig) {
     "caminho_logo",
     "mensagem_cupom",
     "taxa_entrega_centavos",
+    "taxa_servico_percentual",
+    "limite_desconto_sem_pin_centavos",
+    "kds_atraso_min",
+    "usa_gaveta",
     "impressora_padrao_id",
     "impressora_producao_id",
     "impressora_conta_id",
@@ -80,6 +88,29 @@ export async function rotasConfiguracoes(app: FastifyInstance) {
   const auth = {
     onRequest: [(app as any).autenticar, soTipos("ROOT", "ADMIN")],
   };
+  const authOps = {
+    onRequest: [(app as any).autenticar, soTipos("ROOT", "ADMIN", "GERENTE", "ATENDENTE")],
+  };
+
+  app.get("/configuracoes/modulos", { onRequest: [(app as any).autenticar] }, async () => {
+    const cfg = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
+    return {
+      estoque_nivel: cfg?.estoque_nivel ?? 0,
+      usa_gaveta: cfg?.usa_gaveta ?? false,
+      delivery: cfg?.modulo_delivery ?? true,
+      promocoes: cfg?.modulo_promocoes ?? false,
+    };
+  });
+
+  app.get("/configuracoes/operacao", authOps, async () => {
+    const cfg = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
+    return {
+      taxa_servico_percentual: cfg?.taxa_servico_percentual ?? 10,
+      limite_desconto_sem_pin_centavos: cfg?.limite_desconto_sem_pin_centavos ?? 500,
+      usa_gaveta: cfg?.usa_gaveta ?? false,
+      kds_atraso_min: cfg?.kds_atraso_min ?? 15,
+    };
+  });
 
   app.get("/configuracoes", auth, async () => {
     const config = await prisma.configuracao.findFirst({ orderBy: { id: "asc" } });
@@ -139,6 +170,27 @@ export async function rotasConfiguracoes(app: FastifyInstance) {
         return reply.code(400).send({ erro: "Taxa de entrega inválida" });
       }
       data.taxa_entrega_centavos = Math.round(body.taxa_entrega_centavos);
+    }
+    if (body.taxa_servico_percentual !== undefined) {
+      const pct = Math.round(body.taxa_servico_percentual);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 30) {
+        return reply.code(400).send({ erro: "A taxa de serviço fica entre 0 e 30%.", codigo: "taxa_invalida" });
+      }
+      data.taxa_servico_percentual = pct;
+    }
+    if (body.limite_desconto_sem_pin_centavos !== undefined) {
+      const limite = Math.round(body.limite_desconto_sem_pin_centavos);
+      if (!Number.isFinite(limite) || limite < 0) {
+        return reply.code(400).send({ erro: "Limite de desconto inválido.", codigo: "limite_invalido" });
+      }
+      data.limite_desconto_sem_pin_centavos = limite;
+    }
+    if (body.kds_atraso_min !== undefined) {
+      const min = Math.round(body.kds_atraso_min);
+      if (!Number.isFinite(min) || min < 1 || min > 240) {
+        return reply.code(400).send({ erro: "O atraso do KDS fica entre 1 e 240 minutos.", codigo: "atraso_invalido" });
+      }
+      data.kds_atraso_min = min;
     }
 
     if (typeof body.uf === "string" && body.uf.trim()) {

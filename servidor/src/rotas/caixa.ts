@@ -40,7 +40,7 @@ export async function rotasCaixa(app: FastifyInstance) {
     });
   });
 
-  app.get("/caixa/atual", authOps, async (req) => {
+  app.get("/caixa/atual", authCaixa, async (req) => {
     const s = await sessaoAberta();
     const gaveta = await estadoGaveta();
     const gestor = ehGestor((req.user as any).tipo);
@@ -153,7 +153,8 @@ export async function rotasCaixa(app: FastifyInstance) {
       const aprov = await validarPinGerente(body.pin, (body as any).aprovador_id);
       if (!aprov) {
         return reply.code(403).send({
-          erro: "Sangria exige GERENTE+ ou PIN válido (informe aprovador_id e pin)",
+          erro: "Sangria precisa do PIN de um gerente.",
+          codigo: "pin_invalido",
         });
       }
       aprovadorId = aprov.id;

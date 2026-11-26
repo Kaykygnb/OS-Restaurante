@@ -9,6 +9,21 @@ export async function rotasImpressaoFila(app: FastifyInstance) {
     onRequest: [(app as any).autenticar, soTipos("ROOT", "ADMIN", "GERENTE", "ATENDENTE", "COZINHEIRO")],
   };
 
+  app.get("/impressoras/status", authOps, async () => {
+    const impressoras = await prisma.impressora.findMany({
+      where: { ativo: true },
+      orderBy: { nome: "asc" },
+      select: { id: true, nome: true, ultimo_status: true, ultimo_erro: true, testado_em: true, updatedAt: true },
+    });
+    return impressoras.map((imp) => ({
+      id: imp.id,
+      nome: imp.nome,
+      status: imp.ultimo_status === "ONLINE" ? "ok" : imp.ultimo_status === "ERRO" ? "erro" : "sem_resposta",
+      ultimo_erro: imp.ultimo_erro,
+      desde: (imp.testado_em ?? imp.updatedAt).toISOString(),
+    }));
+  });
+
   app.get("/impressao/fila", authOps, async (req) => {
     const status = String((req.query as any)?.status ?? "").toUpperCase();
     const trabalhos = await prisma.trabalho_impressao.findMany({

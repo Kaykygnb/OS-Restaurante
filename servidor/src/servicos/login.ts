@@ -75,7 +75,12 @@ export async function entrar(app: FastifyInstance, usuario: string, senha: strin
     status: 200,
     corpo: {
       token,
-      usuario: { id: cadastrado.id, nome: cadastrado.nome, tipo: cadastrado.tipo_usuario },
+      usuario: {
+        id: cadastrado.id,
+        nome: cadastrado.nome,
+        tipo: cadastrado.tipo_usuario,
+        pode_operar_caixa: cadastrado.pode_operar_caixa,
+      },
     },
   };
 }

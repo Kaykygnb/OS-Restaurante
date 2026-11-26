@@ -267,6 +267,7 @@ export function montarCupomProducao(opts: {
   codigo_atendimento: string;
   mesa?: string | null;
   tipo_atendimento?: string;
+  numero_dia?: number | null;
   setor?: string | null;
   garcom_nome?: string | null;
   observacao_atendimento?: string | null;
@@ -286,6 +287,9 @@ export function montarCupomProducao(opts: {
   const b = new EscPosBuilder(opts.colunas, opts.codificacao ?? "CP860");
   b.init();
   b.align("centro").texto("NÃO É DOCUMENTO FISCAL");
+  if (opts.numero_dia) {
+    b.align("centro").negrito(true).tamanho("EXTRA").texto(`SENHA ${opts.numero_dia}`).tamanho("NORMAL").negrito(false);
+  }
   if (opts.apita) b.beep();
   b.align("centro").negrito(true).tamanho("EXTRA");
   if (opts.cancelamento) b.texto("*** CANCELADO ***");

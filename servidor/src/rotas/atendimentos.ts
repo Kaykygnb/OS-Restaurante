@@ -4,6 +4,8 @@ import { soTipos, type TipoUsuario } from "../permissoes.js";
 import { registrarAuditoria } from "../operacao/auditoria.js";
 import { proximoCodigo } from "../operacao/sequencia.js";
 import { calcularTotaisAtendimento, pagoEfetivoCentavos } from "../operacao/totais-atendimento.js";
+import { Prisma } from "../generated/prisma/client.js";
+import { reservarSenhaBalcao } from "../servicos/senha.js";
 
 const TIPOS = new Set(["BALCAO", "RETIRADA", "ENTREGA", "MESA"]);
 
@@ -128,49 +130,70 @@ export async function rotasAtendimentos(app: FastifyInstance) {
     }
 
     let criado;
-    try {
-      criado = await prisma.$transaction(async (tx) => {
-        if (mesa_id != null) {
-          const ocupada = await tx.atendimento.findFirst({
-            where: { mesa_id, status: "ABERTO" },
-          });
-          if (ocupada) {
-            throw Object.assign(
-              new Error(
-                `Mesa ${mesaNumero} já tem atendimento aberto (${ocupada.codigo_atendimento})`
-              ),
-              { status: 409 }
-            );
+    for (let tentativa = 0; tentativa < 5; tentativa++) {
+      try {
+        criado = await prisma.$transaction(async (tx) => {
+          if (mesa_id != null) {
+            const ocupada = await tx.atendimento.findFirst({
+              where: { mesa_id, status: "ABERTO" },
+            });
+            if (ocupada) {
+              throw Object.assign(new Error(`Mesa ${mesaNumero} já tem atendimento aberto`), {
+                status: 409,
+                codigo: "mesa_ocupada",
+                atendimento_id: ocupada.id,
+                codigo_atendimento: ocupada.codigo_atendimento,
+              });
+            }
           }
+          const codigo = await proximoCodigo(tx, "ATENDIMENTO", "AT");
+          const senha = tipo === "BALCAO" ? await reservarSenhaBalcao(tx) : null;
+          return tx.atendimento.create({
+            data: {
+              codigo_atendimento: codigo,
+              tipo_atendimento: tipo as any,
+              usuario_id,
+              mesa_id,
+              cliente_nome: body.cliente_nome?.trim() || null,
+              cliente_telefone: body.cliente_telefone?.trim() || null,
+              cliente_endereco: body.cliente_endereco?.trim() || null,
+              observacao: body.observacao?.trim() || null,
+              taxa_entrega_centavos: taxa_entrega,
+              ...(senha ?? {}),
+            },
+            include: includeDetalhe,
+          });
+        });
+        break;
+      } catch (err: any) {
+        const senhaRepetida =
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === "P2002" &&
+          /atendimento_senha_balcao_dia|dia_operacao/.test(String(err.message));
+        if (senhaRepetida && tentativa < 4) continue;
+        const msg = err instanceof Error ? err.message : "Falha ao abrir atendimento";
+        if (err?.status === 409 || /UNIQUE|atendimento_mesa_aberta/i.test(msg)) {
+          let atendimento_id = err?.atendimento_id as number | undefined;
+          let codigo_atendimento = err?.codigo_atendimento as string | undefined;
+          if (!atendimento_id && mesa_id != null) {
+            const ocupada = await prisma.atendimento.findFirst({
+              where: { mesa_id, status: "ABERTO" },
+              select: { id: true, codigo_atendimento: true },
+            });
+            atendimento_id = ocupada?.id;
+            codigo_atendimento = ocupada?.codigo_atendimento;
+          }
+          return reply.code(409).send({
+            erro: atendimento_id ? msg : `Mesa ${mesaNumero ?? ""} já tem atendimento aberto`,
+            codigo: "mesa_ocupada",
+            atendimento_id: atendimento_id ?? null,
+            codigo_atendimento: codigo_atendimento ?? null,
+          });
         }
-        const codigo = await proximoCodigo(tx, "ATENDIMENTO", "AT");
-        return tx.atendimento.create({
-          data: {
-            codigo_atendimento: codigo,
-            tipo_atendimento: tipo as any,
-            usuario_id,
-            mesa_id,
-            cliente_nome: body.cliente_nome?.trim() || null,
-            cliente_telefone: body.cliente_telefone?.trim() || null,
-            cliente_endereco: body.cliente_endereco?.trim() || null,
-            observacao: body.observacao?.trim() || null,
-            taxa_entrega_centavos: taxa_entrega,
-          },
-          include: includeDetalhe,
-        });
-      });
-    } catch (err: any) {
-      const msg = err instanceof Error ? err.message : "Falha ao abrir atendimento";
-      if (err?.status === 409 || /UNIQUE|atendimento_mesa_aberta/i.test(msg)) {
-        return reply.code(409).send({
-          erro:
-            err?.status === 409
-              ? msg
-              : `Mesa ${mesaNumero ?? ""} já tem atendimento aberto`,
-        });
+        return reply.code(400).send({ erro: msg, codigo: "atendimento_invalido" });
       }
-      return reply.code(400).send({ erro: msg });
     }
+    if (!criado) return reply.code(409).send({ erro: "Não foi possível gerar a senha.", codigo: "senha_em_conflito" });
 
     await registrarAuditoria(prisma, {
       usuario_id,
@@ -368,8 +391,16 @@ export async function rotasAtendimentos(app: FastifyInstance) {
     }
 
     const tipo = (req.user as any).tipo as TipoUsuario;
+    const body = (req.body ?? {}) as { pin?: string; aprovador_id?: number };
     if (at.pedidos.length && !["ROOT", "ADMIN", "GERENTE"].includes(tipo)) {
-      return reply.code(403).send({ erro: "Atendimento com pedidos: só GERENTE+ cancela" });
+      const { validarPinGerente } = await import("../operacao/pin.js");
+      const aprov = await validarPinGerente(body.pin, body.aprovador_id);
+      if (!aprov) {
+        return reply.code(403).send({
+          erro: "Cancelar esta conta precisa do PIN de um gerente.",
+          codigo: "pin_invalido",
+        });
+      }
     }
     if (!motivo && at.pedidos.length) {
       return reply.code(400).send({ erro: "Informe o motivo do cancelamento" });

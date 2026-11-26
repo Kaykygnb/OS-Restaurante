@@ -89,6 +89,7 @@ export async function enfileirarProducaoPedido(opts: {
   codigo_atendimento: string;
   mesa_numero?: number | null;
   tipo_atendimento: string;
+  numero_dia?: number | null;
   itens: ItemRoteavel[];
   cancelamento?: boolean;
   reimpressao?: boolean;
@@ -178,6 +179,7 @@ export async function enfileirarProducaoPedido(opts: {
       codigo_atendimento: opts.codigo_atendimento,
       mesa: opts.mesa_numero != null ? String(opts.mesa_numero) : null,
       tipo_atendimento: opts.tipo_atendimento,
+      numero_dia: opts.numero_dia ?? null,
       setor: impressora.nome,
       garcom_nome: opts.garcom_nome ?? null,
       observacao_atendimento: opts.observacao_atendimento ?? null,
