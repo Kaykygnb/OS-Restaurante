@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import AbaEntrega from "./configuracoes/AbaEntrega";
+import AbaOperacao from "./configuracoes/AbaOperacao";
+import { Link, Navigate } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
 import { lerUsuario } from "../auth/sessao";
 import { api } from "../servicos/api";
 import { rotuloDocumento } from "../util/rotulos";
 import { formatarReais, reaisParaCentavos } from "../util/dinheiro";
 
-type AbaConfig = "estabelecimento" | "impressoras";
+type AbaConfig = "estabelecimento" | "operacao" | "entrega" | "impressoras";
 
 type Config = {
   configurado: boolean;
@@ -209,6 +211,20 @@ function ConfiguracoesPagina() {
         >
           Impressoras
         </button>
+        {(["operacao", "entrega"] as const).map((a) => (
+          <button
+            key={a}
+            type="button"
+            className={`aba${aba === a ? " on" : ""}`}
+            onClick={() => {
+              setAba(a);
+              setErro("");
+              setOk("");
+            }}
+          >
+            {a === "operacao" ? "Operação" : "Entrega"}
+          </button>
+        ))}
       </div>
 
       {erro ? <p className="feedback-card feedback-erro" role="alert">{erro}</p> : null}
@@ -216,6 +232,10 @@ function ConfiguracoesPagina() {
 
       {aba === "estabelecimento" ? (
         <AbaEstabelecimento setErro={setErro} setOk={setOk} />
+      ) : aba === "operacao" ? (
+        <AbaOperacao />
+      ) : aba === "entrega" ? (
+        <AbaEntrega />
       ) : (
         <AbaImpressoras setErro={setErro} setOk={setOk} />
       )}
@@ -333,6 +353,14 @@ function AbaEstabelecimento({
 
   return (
     <>
+      <div className="faixa info" style={{ marginBottom: 12 }}>
+        <span>
+          <strong>{configurado ? "Celulares da equipe" : "Primeira configuração: conecte os celulares"}</strong> · mostre o QR deste PC para os garçons entrarem pelo navegador ou pelo app Android.
+        </span>
+        <Link className="btn" to="/painel/conectar">
+          Conectar celulares
+        </Link>
+      </div>
       <div className="config-toolbar">
         <button type="button" className="btn-sec" onClick={() => void carregar()} disabled={carregando}>
           {carregando ? "Carregando…" : "Atualizar"}
