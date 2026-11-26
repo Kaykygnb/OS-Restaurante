@@ -1,39 +1,48 @@
-/** Converte texto em reais (pt-BR) para centavos. Aceita "12,50", "1.250,00", "1.250". */
+/**
+ * Dinheiro no front: tudo em centavos (inteiro). Este é o ÚNICO lugar que converte texto ↔ centavos
+ * e formata R$ para a tela.
+ */
+
+/**
+ * Converte o que a pessoa digitou (pt-BR) em centavos. Devolve NaN quando o texto não é um valor válido.
+ * Aceita "12,50", "12", "1.250" (milhar), "1.250,00", "R$ 1.250,00" e "12.50" (ponto decimal com 1-2 casas).
+ * Recusa negativos, letras e vírgula com mais de 2 casas ("1,250" é ambíguo).
+ */
 export function reaisParaCentavos(valor: string | number): number {
-  if (typeof valor === "number") return Math.round(valor * 100);
-  let limpo = valor.replace(/\s/g, "").replace(/R\$/gi, "").trim();
+  if (typeof valor === "number") return Number.isFinite(valor) && valor >= 0 ? Math.round(valor * 100) : NaN;
+  let limpo = valor.replace(/\s/g, "").replace(/\u00a0/g, "").replace(/R\$/gi, "").trim();
   if (!limpo) return NaN;
+  if (!/^[\d.,]+$/.test(limpo)) return NaN;
 
   const temVirgula = limpo.includes(",");
   const temPonto = limpo.includes(".");
 
-  if (temVirgula && temPonto) {
-    // 1.250,00 → milhar ponto, decimal vírgula
-    limpo = limpo.replace(/\./g, "").replace(",", ".");
-  } else if (temVirgula) {
-    // 12,50 → decimal vírgula
-    limpo = limpo.replace(",", ".");
+  if (temVirgula) {
+    if (limpo.split(",").length > 2) return NaN;
+    const [inteiro, dec = ""] = limpo.split(",");
+    if (dec.length > 2) return NaN;
+    if (temPonto && !/^\d{1,3}(\.\d{3})+$/.test(inteiro)) return NaN; // 1.250,00 sim; 12.5,00 não
+    limpo = `${inteiro.replace(/\./g, "")}.${dec || "0"}`;
   } else if (temPonto) {
     const partes = limpo.split(".");
-    if (partes.length > 2) {
-      // 1.250.000
+    if (partes.length > 2 || partes[1].length === 3) {
+      // 1.250 / 1.250.000 → milhar
+      if (!/^\d{1,3}(\.\d{3})+$/.test(limpo)) return NaN;
       limpo = limpo.replace(/\./g, "");
-    } else {
-      const dec = partes[1] ?? "";
-      // 1.250 → milhar (3 dígitos); 12.5 / 12.50 → decimal
-      if (dec.length === 3) limpo = partes[0] + partes[1];
-      else limpo = limpo; // decimal com ponto
+    } else if (partes[1].length > 2) {
+      return NaN;
     }
+    // senão: 12.5 / 12.50 → ponto decimal (teclado numérico do celular)
   }
 
   const n = Number(limpo);
-  if (!Number.isFinite(n)) return NaN;
+  if (!Number.isFinite(n) || n < 0) return NaN;
   return Math.round(n * 100);
 }
 
+/** Só para a tela: "R$ 1.250,00". */
 export function formatarReais(centavos: number | null | undefined): string {
-  if (centavos === null || centavos === undefined) return "—";
-  return (centavos / 100).toLocaleString("pt-BR", {
+  return ((centavos ?? 0) / 100).toLocaleString("pt-BR", {
     style: "currency",
     currency: "BRL",
   });
@@ -49,6 +58,7 @@ export function formatarReaisCupom(centavos: number): string {
   return `${neg ? "-" : ""}R$ ${inteiro},${cents}`;
 }
 
-export function centavosParaCampo(centavos: number): string {
-  return (centavos / 100).toFixed(2).replace(".", ",");
+/** Centavos para preencher um campo de texto: 1050 → "10,50". */
+export function centavosParaCampo(centavos: number | null | undefined): string {
+  return ((centavos ?? 0) / 100).toFixed(2).replace(".", ",");
 }
