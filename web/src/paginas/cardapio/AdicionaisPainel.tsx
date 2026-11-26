@@ -66,21 +66,21 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
   }, [setErro]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga de dados da tela (fetch)
     void carregar();
   }, [carregar]);
 
   const selecionado = grupos.find((g) => g.id === grupoId) ?? null;
 
-  useEffect(() => {
-    if (!selecionado) {
-      setEditNomeGrupo("");
-      setEditCatsGrupo([]);
-      return;
-    }
-    setEditNomeGrupo(selecionado.nome);
-    setEditCatsGrupo(selecionado.categorias.map((c) => c.categoria_id));
-    setEditandoAdicionalId(null);
-  }, [selecionado?.id]);
+  // Ao trocar de grupo, recarrega o formulário de edição (ajuste durante o render, sem efeito).
+  const idSelecionado = selecionado?.id ?? null;
+  const [grupoNoForm, setGrupoNoForm] = useState<number | null | undefined>(undefined);
+  if (grupoNoForm !== idSelecionado) {
+    setGrupoNoForm(idSelecionado);
+    setEditNomeGrupo(selecionado?.nome ?? "");
+    setEditCatsGrupo(selecionado ? selecionado.categorias.map((c) => c.categoria_id) : []);
+    if (selecionado) setEditandoAdicionalId(null);
+  }
 
   const produtosDaCategoriaDoGrupo =
     selecionado?.categorias.flatMap((c) => {

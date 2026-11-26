@@ -3,6 +3,7 @@ import { Navigate } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
 import { lerUsuario } from "../auth/sessao";
 import { api } from "../servicos/api";
+import { rotuloDocumento } from "../util/rotulos";
 import { formatarReais, reaisParaCentavos } from "../util/dinheiro";
 
 type AbaConfig = "estabelecimento" | "impressoras";
@@ -278,6 +279,7 @@ function AbaEstabelecimento({
   }, [setErro]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga de dados da tela (fetch)
     void carregar();
   }, [carregar]);
 
@@ -578,6 +580,7 @@ function AbaImpressoras({
   }, [filtro, setErro, carregarSistema]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga de dados da tela (fetch)
     void carregar();
   }, [carregar]);
 
@@ -589,12 +592,14 @@ function AbaImpressoras({
     setErro("");
   }
 
-  function abrirEditar(imp: Impressora) {
+  function abrirEditar(imp: Impressora, manterAviso = false) {
     setModo("editar");
     setEditId(imp.id);
     setForm(formFromImp(imp));
-    setOk("");
-    setErro("");
+    if (!manterAviso) {
+      setOk("");
+      setErro("");
+    }
   }
 
   function fecharPainel() {
@@ -678,7 +683,7 @@ function AbaImpressoras({
       if (id != null) {
         const atualizadas = (await api(`/impressoras?ativos=${filtro}`)) as Impressora[];
         const found = atualizadas.find((i) => i.id === id);
-        if (found) abrirEditar(found);
+        if (found) abrirEditar(found, true);
         else fecharPainel();
       }
     } catch (err) {
@@ -782,7 +787,7 @@ function AbaImpressoras({
         body: JSON.stringify(patch),
       })) as ConfigDocumento;
       setDocs((lista) => lista.map((d) => (d.tipo === up.tipo ? up : d)));
-      setOk(`Documento ${doc.tipo} atualizado`);
+      setOk(`${rotuloDocumento(doc.tipo)}: configuração salva`);
     } catch (err) {
       setErro((err as Error).message);
     }
@@ -890,17 +895,20 @@ function AbaImpressoras({
         <div className="tabela-docs">
           {docs.map((d) => (
             <div key={d.tipo} className="config-grid-2" style={{ alignItems: "end", marginBottom: 10 }}>
-              <strong>{d.tipo}</strong>
-              <select
-                value={d.modo}
-                onChange={(e) =>
-                  void salvarDoc(d, { modo: e.target.value as ConfigDocumento["modo"] })
-                }
-              >
-                <option value="AUTOMATICO">Automático</option>
-                <option value="MANUAL">Manual</option>
-                <option value="NUNCA">Nunca</option>
-              </select>
+              <strong>{rotuloDocumento(d.tipo)}</strong>
+              <label className="campo">
+                <span>Quando imprime</span>
+                <select
+                  value={d.modo}
+                  onChange={(e) =>
+                    void salvarDoc(d, { modo: e.target.value as ConfigDocumento["modo"] })
+                  }
+                >
+                  <option value="AUTOMATICO">Sozinho (automático)</option>
+                  <option value="MANUAL">Só quando eu mandar</option>
+                  <option value="NUNCA">Nunca</option>
+                </select>
+              </label>
               <label className="campo">
                 <span>Vias</span>
                 <input

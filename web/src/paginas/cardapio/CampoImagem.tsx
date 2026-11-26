@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { IMAGEM_PADRAO_CARDAPIO, origemImagemCardapio } from "./imagem";
 
 type Props = {
@@ -9,17 +9,12 @@ type Props = {
 
 export default function CampoImagem({ caminho, onArquivo, onRemover }: Props) {
   const [arquivo, setArquivo] = useState<File | null>(null);
-  const [preview, setPreview] = useState("");
-
+  // Prévia derivada do arquivo (sem setState em efeito); o efeito só libera a URL antiga.
+  const preview = useMemo(() => (arquivo ? URL.createObjectURL(arquivo) : ""), [arquivo]);
   useEffect(() => {
-    if (!arquivo) {
-      setPreview("");
-      return;
-    }
-    const url = URL.createObjectURL(arquivo);
-    setPreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [arquivo]);
+    if (!preview) return;
+    return () => URL.revokeObjectURL(preview);
+  }, [preview]);
 
   return (
     <div className="campo-imagem">
