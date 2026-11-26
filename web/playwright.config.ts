@@ -2,8 +2,8 @@ import { defineConfig } from "@playwright/test";
 
 /**
  * Testes de ponta a ponta do painel, no tamanho do PC do caixa e no celular do garçom.
- * A API é simulada em cada teste (page.route), então não precisa do servidor nem de banco:
- * só o `vite` (sobe sozinho pelo webServer abaixo).
+ * Roda contra o mock do front (`vite --mode mock`, VITE_MOCK=1): não precisa do servidor nem de banco.
+ * Cada teste entra com `?mock_reset=1`, então começa do mesmo estado (caixa aberto, mesa 3 ocupada).
  *
  * Rodar:  npm run test:e2e
  * Usar um Chrome já instalado:  PW_CHROME=/usr/bin/google-chrome npm run test:e2e
@@ -31,9 +31,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npx vite --port ${porta} --strictPort`,
+    command: `npx vite --mode mock --port ${porta} --strictPort`,
     url: `http://localhost:${porta}/login`,
-    reuseExistingServer: true,
+    reuseExistingServer: false,
     timeout: 60_000,
   },
 });
