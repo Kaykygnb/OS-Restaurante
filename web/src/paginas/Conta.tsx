@@ -1,3 +1,4 @@
+import { lerConfigOperacao } from "../servicos/rotas";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
@@ -103,13 +104,10 @@ export default function Conta() {
       setErro((e as Error).message);
     }
     // Informações de apoio: se falharem, a conta continua funcionando.
-    // GET /configuracoes é só ROOT/ADMIN; para os demais usamos o padrão do sistema (10% e R$ 5,00).
-    // Pedido ao servidor: expor esses dois valores para a operação (ver ANALISE-FRONT.md).
-    if (["ROOT", "ADMIN"].includes(lerUsuario()?.tipo ?? "")) {
-      api("/configuracoes")
-        .then((c) => setConfig(c as Config))
-        .catch(() => undefined);
-    }
+    // GET /configuracoes/operacao: taxa de serviço e limite de desconto, legível por qualquer usuário logado.
+    lerConfigOperacao()
+      .then((c) => setConfig(c))
+      .catch(() => undefined);
     api("/caixa/atual")
       .then((c) => setCaixaAberto(Boolean((c as { aberto: boolean }).aberto)))
       .catch(() => setCaixaAberto(null));
