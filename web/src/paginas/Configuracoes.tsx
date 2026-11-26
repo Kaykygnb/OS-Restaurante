@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { Navigate } from "react-router-dom";
+import AbaEntrega from "./configuracoes/AbaEntrega";
+import AbaOperacao from "./configuracoes/AbaOperacao";
+import { Link, Navigate } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
 import { lerUsuario } from "../auth/sessao";
 import { api } from "../servicos/api";
+import { rotuloDocumento } from "../util/rotulos";
 import { formatarReais, reaisParaCentavos } from "../util/dinheiro";
 
-type AbaConfig = "estabelecimento" | "impressoras";
+type AbaConfig = "estabelecimento" | "operacao" | "entrega" | "impressoras";
 
 type Config = {
   configurado: boolean;
@@ -208,6 +211,20 @@ function ConfiguracoesPagina() {
         >
           Impressoras
         </button>
+        {(["operacao", "entrega"] as const).map((a) => (
+          <button
+            key={a}
+            type="button"
+            className={`aba${aba === a ? " on" : ""}`}
+            onClick={() => {
+              setAba(a);
+              setErro("");
+              setOk("");
+            }}
+          >
+            {a === "operacao" ? "Operação" : "Entrega"}
+          </button>
+        ))}
       </div>
 
       {erro ? <p className="feedback-card feedback-erro" role="alert">{erro}</p> : null}
@@ -215,6 +232,10 @@ function ConfiguracoesPagina() {
 
       {aba === "estabelecimento" ? (
         <AbaEstabelecimento setErro={setErro} setOk={setOk} />
+      ) : aba === "operacao" ? (
+        <AbaOperacao />
+      ) : aba === "entrega" ? (
+        <AbaEntrega />
       ) : (
         <AbaImpressoras setErro={setErro} setOk={setOk} />
       )}
@@ -278,6 +299,7 @@ function AbaEstabelecimento({
   }, [setErro]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga de dados da tela (fetch)
     void carregar();
   }, [carregar]);
 
@@ -331,6 +353,14 @@ function AbaEstabelecimento({
 
   return (
     <>
+      <div className="faixa info" style={{ marginBottom: 12 }}>
+        <span>
+          <strong>{configurado ? "Celulares da equipe" : "Primeira configuração: conecte os celulares"}</strong> · mostre o QR deste PC para os garçons entrarem pelo navegador ou pelo app Android.
+        </span>
+        <Link className="btn" to="/painel/conectar">
+          Conectar celulares
+        </Link>
+      </div>
       <div className="config-toolbar">
         <button type="button" className="btn-sec" onClick={() => void carregar()} disabled={carregando}>
           {carregando ? "Carregando…" : "Atualizar"}
@@ -578,6 +608,7 @@ function AbaImpressoras({
   }, [filtro, setErro, carregarSistema]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga de dados da tela (fetch)
     void carregar();
   }, [carregar]);
 
@@ -589,12 +620,14 @@ function AbaImpressoras({
     setErro("");
   }
 
-  function abrirEditar(imp: Impressora) {
+  function abrirEditar(imp: Impressora, manterAviso = false) {
     setModo("editar");
     setEditId(imp.id);
     setForm(formFromImp(imp));
-    setOk("");
-    setErro("");
+    if (!manterAviso) {
+      setOk("");
+      setErro("");
+    }
   }
 
   function fecharPainel() {
@@ -678,7 +711,7 @@ function AbaImpressoras({
       if (id != null) {
         const atualizadas = (await api(`/impressoras?ativos=${filtro}`)) as Impressora[];
         const found = atualizadas.find((i) => i.id === id);
-        if (found) abrirEditar(found);
+        if (found) abrirEditar(found, true);
         else fecharPainel();
       }
     } catch (err) {
@@ -782,7 +815,7 @@ function AbaImpressoras({
         body: JSON.stringify(patch),
       })) as ConfigDocumento;
       setDocs((lista) => lista.map((d) => (d.tipo === up.tipo ? up : d)));
-      setOk(`Documento ${doc.tipo} atualizado`);
+      setOk(`${rotuloDocumento(doc.tipo)}: configuração salva`);
     } catch (err) {
       setErro((err as Error).message);
     }
@@ -890,17 +923,20 @@ function AbaImpressoras({
         <div className="tabela-docs">
           {docs.map((d) => (
             <div key={d.tipo} className="config-grid-2" style={{ alignItems: "end", marginBottom: 10 }}>
-              <strong>{d.tipo}</strong>
-              <select
-                value={d.modo}
-                onChange={(e) =>
-                  void salvarDoc(d, { modo: e.target.value as ConfigDocumento["modo"] })
-                }
-              >
-                <option value="AUTOMATICO">Automático</option>
-                <option value="MANUAL">Manual</option>
-                <option value="NUNCA">Nunca</option>
-              </select>
+              <strong>{rotuloDocumento(d.tipo)}</strong>
+              <label className="campo">
+                <span>Quando imprime</span>
+                <select
+                  value={d.modo}
+                  onChange={(e) =>
+                    void salvarDoc(d, { modo: e.target.value as ConfigDocumento["modo"] })
+                  }
+                >
+                  <option value="AUTOMATICO">Sozinho (automático)</option>
+                  <option value="MANUAL">Só quando eu mandar</option>
+                  <option value="NUNCA">Nunca</option>
+                </select>
+              </label>
               <label className="campo">
                 <span>Vias</span>
                 <input

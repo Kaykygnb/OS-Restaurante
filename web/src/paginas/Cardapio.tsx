@@ -30,6 +30,7 @@ export default function Cardapio() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga de dados da tela (fetch)
     void carregar();
   }, [carregar]);
 
@@ -94,19 +95,18 @@ export default function Cardapio() {
 
       <nav className="cardapio-tabs" aria-label="Seções do cardápio">
         <button type="button" className={`cardapio-tab${aba === "produtos" ? " ativa" : ""}`} onClick={() => setAba("produtos")} aria-current={aba === "produtos" ? "page" : undefined}>
-          <span className="titulo-com-ajuda">
+          {/* Sem <Ajuda> aqui: botão dentro de botão é HTML inválido e o toque no "i" trocava de aba. */}
+          <span className="titulo-com-ajuda" title="Cadastre o item, as opções de preço (P/M/G) e, depois de salvar, os opcionais do pedido.">
             Produtos
-            <Ajuda texto="Cadastre o item, as opções de preço (P/M/G) e, depois de salvar, os opcionais do pedido." />
           </span>
           <span className="tab-contagem">{resumo.produtos}</span>
         </button>
         <button type="button" className={`cardapio-tab${aba === "adicionais" ? " ativa" : ""}`} onClick={() => setAba("adicionais")} aria-current={aba === "adicionais" ? "page" : undefined}>
-          <span className="titulo-com-ajuda">
+          <span
+            className="titulo-com-ajuda"
+            title="Grupos ligados a categorias. Ex.: grupo Proteínas na categoria Pastéis aparece em todos os pastéis, menos os que você excluir."
+          >
             Adicionais
-            <Ajuda
-              alinhar="direita"
-              texto="Grupos ligados a categorias. Ex.: grupo Proteínas na categoria Pastéis aparece em todos os pastéis, menos os que você excluir."
-            />
           </span>
           <span className="tab-subtitulo">Grupos e complementos</span>
         </button>
