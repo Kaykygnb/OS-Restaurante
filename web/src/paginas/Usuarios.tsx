@@ -21,6 +21,7 @@ type Usuario = {
   telefone: string | null;
   matricula: string | null;
   ativo: boolean;
+  pode_operar_caixa?: boolean;
 };
 
 type FiltroAtivos = "1" | "0";
@@ -331,6 +332,17 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
     }
   }
 
+  async function trocarCaixa(u: Usuario, valor: boolean) {
+    setErro("");
+    try {
+      await api(`/usuarios/${u.id}`, { method: "PATCH", body: JSON.stringify({ pode_operar_caixa: valor }) });
+      setOk(valor ? `${u.nome} agora pode operar o caixa` : `${u.nome} não opera mais o caixa`);
+      await carregar();
+    } catch (err) {
+      setErro((err as Error).message);
+    }
+  }
+
   const painelAberto = modo !== null;
 
   return (
@@ -410,11 +422,17 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                     <span className={`prod-badge tipo-${u.tipo_usuario.toLowerCase()}`}>
                       {ROTULO_TIPO[u.tipo_usuario]}
                     </span>
+                    {u.pode_operar_caixa ? <span className="prod-badge">Opera o caixa</span> : null}
                     {!u.ativo ? <span className="prod-badge neutro">Inativo</span> : null}
                     {u.id === meuId ? <span className="prod-badge neutro">Você</span> : null}
                   </span>
                 </button>
                 <div className="prod-acoes">
+                  {u.ativo && u.tipo_usuario !== "ROOT" && u.tipo_usuario !== "COZINHEIRO" && u.tipo_usuario !== "ENTREGADOR" ? (
+                    <label className="check" title="Abrir e fechar o caixa, venda rápida e receber pagamentos">
+                      <input type="checkbox" checked={!!u.pode_operar_caixa} onChange={(e) => void trocarCaixa(u, e.target.checked)} /> Pode operar caixa
+                    </label>
+                  ) : null}
                   <button type="button" className="btn-ghost" onClick={() => abrirEditar(u)}>
                     Editar
                   </button>
