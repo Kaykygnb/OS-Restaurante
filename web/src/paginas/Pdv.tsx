@@ -293,6 +293,8 @@ export default function Pdv() {
   }
 
   const tituloMesa = tituloAtendimento(atendimento);
+  const ehEntrega = atendimento.tipo_atendimento === "ENTREGA" || atendimento.tipo_atendimento === "RETIRADA";
+  const voltar = ehEntrega ? { para: "/painel/delivery", rotulo: "Delivery" } : { para: "/painel/mesas", rotulo: "Mesas" };
 
   return (
     <div className={`cardapio pdv-pagina${carrinho.length ? " com-barra-carrinho" : ""}`}>
@@ -314,8 +316,8 @@ export default function Pdv() {
           <button type="button" className="btn-sec" onClick={() => sairPara(`/painel/conta/${id}`)}>
             Conta / pagar
           </button>
-          <button type="button" className="btn-ghost" onClick={() => sairPara("/painel/mesas")}>
-            Mesas
+          <button type="button" className="btn-ghost" onClick={() => sairPara(voltar.para)}>
+            {voltar.rotulo}
           </button>
         </div>
       </section>
