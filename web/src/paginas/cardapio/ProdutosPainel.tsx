@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Ajuda from "../../componentes/Ajuda";
 import { api, type ApiErro } from "../../servicos/api";
 import { formatarReais, reaisParaCentavos } from "../../util/dinheiro";
@@ -20,20 +20,14 @@ function novaLinha(nome = "Padrão"): LinhaVariante {
 }
 
 export default function ProdutosPainel({ categorias, onMudou, setErro, setOk }: Props) {
-  const [categoriaId, setCategoriaId] = useState<number | null>(
-    categorias.find((categoria) => categoria.produtos.length > 0)?.id ?? categorias[0]?.id ?? null
-  );
+  // Na primeira carga, priorize uma categoria que já tenha itens (a tela não parece vazia).
+  const primeiraComItens = categorias.find((categoria) => categoria.produtos.length > 0)?.id ?? categorias[0]?.id ?? null;
+  const [categoriaEscolhida, setCategoriaId] = useState<number | null>(primeiraComItens);
+  // Se a categoria escolhida sumiu (excluída/recarregada), cai na primeira com itens — derivado, sem efeito.
+  const categoriaId =
+    categoriaEscolhida && categorias.some((c) => c.id === categoriaEscolhida) ? categoriaEscolhida : primeiraComItens;
   const [busca, setBusca] = useState("");
   const [salvando, setSalvando] = useState(false);
-
-  useEffect(() => {
-    setCategoriaId((atual) => {
-      if (atual && categorias.some((c) => c.id === atual)) return atual;
-      // Na primeira carga, priorize uma categoria que já tenha itens. Assim a
-      // tela não parece vazia quando o catálogo está preenchido em outra seção.
-      return categorias.find((categoria) => categoria.produtos.length > 0)?.id ?? categorias[0]?.id ?? null;
-    });
-  }, [categorias]);
 
   const [novaCategoria, setNovaCategoria] = useState("");
   const [editandoCatId, setEditandoCatId] = useState<number | null>(null);
