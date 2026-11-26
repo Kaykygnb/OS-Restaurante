@@ -1,0 +1,650 @@
+// Schema do sistema de restaurante (versão offline de teste)
+// Docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+
+
+// =====================================================
+// DADOS DO RESTAURANTE (cadastro do estabelecimento)
+// Não é login — é o perfil do negócio (cupom, tela, delivery).
+// Em geral existe só 1 registro.
+// =====================================================
+
+model Configuracao {
+  id Int @id @default(autoincrement())
+
+  // Identidade
+  nome_restaurante String // Razão social ou nome principal ex: "Pastelaria do Kayky LTDA"
+  nome_fantasia    String? // Nome de fachada ex: "Pastéis do Kayky"
+  cnpj             String? // CNPJ (opcional) ex: 12.345.678/0001-90
+  inscricao_estadual String? // IE (opcional)
+
+  // Contato
+  telefone String? // Telefone fixo/comercial ex: (34) 3333-3333
+  whatsapp String? // WhatsApp pra pedidos ex: (34) 99999-9999
+  email    String? // E-mail comercial (não é login de usuário)
+
+  // Endereço
+  cep          String?
+  logradouro   String? // Rua / avenida
+  numero       String?
+  complemento  String?
+  bairro       String?
+  cidade       String?
+  uf           String? // ex: MG
+
+  // Visual / operação
+  caminho_logo     String? // Logo pra cupom e tela ex: fotos/logo.png
+  mensagem_cupom   String? // Texto no rodapé do cupom ex: "Obrigado pela preferência!"
+  taxa_entrega_centavos Int @default(0) // Taxa padrão de delivery em centavos (0 = grátis / definida depois)
+  taxa_servico_percentual Int @default(10) // % sugerido de taxa de serviço (mesa); cliente pode recusar
+  limite_desconto_sem_pin_centavos Int @default(500) // Acima disso exige PIN de GERENTE+
+
+  // Impressoras padrão (roteamento global)
+  impressora_conta_id Int? // Pré-conta
+  impressora_conta    Impressora? @relation("ConfigConta", fields: [impressora_conta_id], references: [id])
+  impressora_caixa_id Int? // Comprovante / gaveta
+  impressora_caixa    Impressora? @relation("ConfigCaixa", fields: [impressora_caixa_id], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// =====================================================
+// USUÁRIOS
+// =====================================================
+
+enum Tipo_usuario {
+  ROOT // Acesso de suporte do Kayky. Senha aleatória gerada na instalação, escondido da tela, tudo vai pro log
+  ADMIN // Dono do restaurante. Acesso total, cria usuários de GERENTE pra baixo
+  GERENTE // Gerente da unidade. Aprova desconto, vale e sangria, cria ATENDENTE, COZINHEIRO e ENTREGADOR
+  ATENDENTE // Caixa ou garçom. Abre atendimento, lança pedido e recebe pagamento
+  COZINHEIRO // Cozinha. Vê e atualiza os pedidos de preparo
+  ENTREGADOR // Entregador. Vê as entregas dele
+}
+
+model Usuario {
+  id           Int          @id @default(autoincrement())
+  matricula    String?      @unique // Matrícula do usuário (opcional) ex: 123456
+  tipo_usuario Tipo_usuario @default(ATENDENTE)
+
+  nome       String
+  login      String  @unique // Nome de acesso ex: joao
+  email      String? @unique // E-mail (opcional) ex: joao@gmail.com
+  senha_hash String // Só o hash da senha (bcrypt), nunca a senha em si
+  pin_hash   String? // Hash do PIN de aprovação rápida no caixa (opcional)
+  telefone   String? // Telefone (opcional) ex: (34) 99999-9999
+
+  ativo Boolean @default(true) // Funcionário que sai é desativado, nunca apagado (mantém os logs)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  atendimentos Atendimento[] @relation("AtendimentoAbertura") // Atendimentos que esse usuário abriu
+  descontos_aplicados Atendimento[] @relation("AtendimentoDesconto")
+  acrescimos_aplicados Atendimento[] @relation("AtendimentoAcrescimo")
+  itens_cancelados Pedido_item[] @relation("PedidoItemCancelamento")
+  pagamentos_recebidos Pagamento[]
+  caixas_abertos Caixa_sessao[] @relation("CaixaAbertura")
+  caixas_fechados Caixa_sessao[] @relation("CaixaFechamento")
+  movimentacoes_caixa Movimentacao_caixa[]
+  logs_auditoria Log_auditoria[]
+}
+
+// =====================================================
+// CARDÁPIO
+// =====================================================
+
+model Categoria {
+  id    Int     @id @default(autoincrement())
+  nome  String  @unique
+  ordem Int     @default(0) // Posição da categoria na tela (arrastar pra ordenar)
+  ativo Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  produtos          Produto[] // Uma categoria tem vários produtos
+  grupos_adicionais Grupo_adicionais_categoria[] // Grupos de adicionais ligados a essa categoria
+  impressoras       Impressora_categoria[] // Impressoras de produção desta categoria
+}
+
+model Produto {
+  id Int @id @default(autoincrement())
+
+  nome           String
+  descricao      String? // Descrição (opcional) ex: Frango, catupiry
+  caminho_imagem String? // Caminho da imagem (opcional) ex: fotos/produtos/produto1.jpg
+
+  exige_preparo    Boolean @default(true) // true = vai pra cozinha | false = produto pronto (refri, água)
+  controla_estoque Boolean @default(false) // Liga o controle de estoque desse produto (módulo opcional)
+
+  ativo Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  categoria_id Int
+  categoria    Categoria @relation(fields: [categoria_id], references: [id]) // Um produto pertence a uma categoria
+
+  produto_variantes Produto_variante[] // Todo produto tem pelo menos uma variante (a "padrão")
+  grupos_adicionais_exclusoes Grupo_adicionais_produto_exclusao[] // Grupos da categoria que NÃO valem pra este produto
+}
+
+// Todo produto tem ao menos 1 variante, por isso o preço fica aqui
+model Produto_variante {
+  id             Int     @id @default(autoincrement())
+  nome           String // Nome da variante ex: Pequeno, Grande, Padrão
+  preco_centavos Int // Preço em centavos ex: 1000 = R$ 10,00
+  caminho_imagem String? // Imagem própria (opcional). Se não tiver, usa a do produto
+  codigo_barras  String? // Código de barras (opcional), pra produto de revenda
+
+  ativo Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  produto_id Int
+  produto    Produto @relation(fields: [produto_id], references: [id]) // Uma variante pertence a um produto
+
+  grupos_escolhas Grupo_escolhas[] // Grupos de escolha dessa variante
+  pedido_itens    Pedido_item[] // Itens vendidos dessa variante (relatórios e ranking)
+}
+
+// ? Grupo de escolhas: opções que o cliente escolhe no produto (sabores, frutas do açaí, molho do macarrão)
+model Grupo_escolhas {
+  id              Int     @id @default(autoincrement())
+  nome            String // Nome do grupo ex: Sabores, Frutas, Molho
+  min_escolhas    Int     @default(0) // 0 = não obrigatório | 1+ = obrigatório escolher
+  max_escolhas    Int     @default(1) // Máximo de escolhas no grupo
+  permite_repetir Boolean @default(false) // Pode escolher a mesma opção mais de uma vez? ex: 2 bolas de morango
+  ordem           Int     @default(0) // Posição do grupo na tela
+  ativo           Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  produto_variante_id Int
+  produto_variante    Produto_variante @relation(fields: [produto_variante_id], references: [id]) // Ligado à variante (todo produto tem uma)
+
+  opcoes_escolha Opcao_escolha[] // Opções desse grupo
+}
+
+model Opcao_escolha {
+  id                   Int     @id @default(autoincrement())
+  nome                 String // Nome da opção ex: Morango, Banana, Nutella
+  preco_extra_centavos Int     @default(0) // Valor a mais (opcional) ex: Nutella +300 = R$ 3,00
+  ordem                Int     @default(0) // Posição da opção na tela
+  ativo                Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  grupo_escolhas_id Int
+  grupo_escolhas    Grupo_escolhas @relation(fields: [grupo_escolhas_id], references: [id]) // Uma opção pertence a um grupo
+
+  pedido_item_escolhas Pedido_item_escolha[] // Vezes que essa opção foi escolhida
+}
+
+// =====================================================
+// ADICIONAIS
+// Grupo de adicionais (ex: Molhos, Proteínas) ligado a categorias.
+// Ex: grupo "Proteínas" ligado à categoria "Pastéis" = aparece em todos os pastéis.
+// =====================================================
+
+model Grupo_adicionais {
+  id    Int     @id @default(autoincrement())
+  nome  String // Nome do grupo ex: Proteínas, Molhos
+  ordem Int     @default(0) // Posição do grupo na tela
+  ativo Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  categorias Grupo_adicionais_categoria[] // Categorias onde esse grupo aparece
+  adicionais Adicional[] // Adicionais desse grupo
+  produtos_excluidos Grupo_adicionais_produto_exclusao[] // Produtos da categoria que não usam este grupo
+}
+
+// Exceção: grupo ligado à categoria, mas alguns produtos ficam de fora
+// Ex: grupo "Adicionais salgados" na categoria Pastéis → exclui pastéis doces
+model Grupo_adicionais_produto_exclusao {
+  id Int @id @default(autoincrement())
+
+  grupo_adicionais_id Int
+  grupo_adicionais    Grupo_adicionais @relation(fields: [grupo_adicionais_id], references: [id])
+
+  produto_id Int
+  produto    Produto @relation(fields: [produto_id], references: [id])
+
+  @@unique([grupo_adicionais_id, produto_id])
+}
+
+// Tabela intermediária N:N entre grupo de adicionais e categoria
+model Grupo_adicionais_categoria {
+  id Int @id @default(autoincrement())
+
+  grupo_adicionais_id Int
+  grupo_adicionais    Grupo_adicionais @relation(fields: [grupo_adicionais_id], references: [id])
+
+  categoria_id Int
+  categoria    Categoria @relation(fields: [categoria_id], references: [id])
+
+  @@unique([grupo_adicionais_id, categoria_id]) // Não repete o mesmo grupo na mesma categoria
+}
+
+model Adicional {
+  id             Int     @id @default(autoincrement())
+  nome           String // Nome do adicional ex: Bacon, Catupiry
+  caminho_imagem String? // Imagem (opcional)
+  qtd_max        Int     @default(5) // Quantas vezes pode por no mesmo item
+  ordem          Int     @default(0) // Posição na tela
+  ativo          Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  grupo_adicionais_id Int
+  grupo_adicionais    Grupo_adicionais @relation(fields: [grupo_adicionais_id], references: [id]) // Um adicional pertence a um grupo
+
+  adicional_variantes Adicional_variante[] // Variantes do adicional ex: Bacon 50g, Bacon 100g
+}
+
+model Adicional_variante {
+  id             Int     @id @default(autoincrement())
+  nome           String // Nome da variante ex: Bacon 50g, Catupiry Grande
+  caminho_imagem String? // Imagem própria (opcional). Se não tiver, usa a do adicional
+  preco_centavos Int // Preço em centavos ex: 300 = R$ 3,00
+
+  ativo Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  adicional_id Int
+  adicional    Adicional @relation(fields: [adicional_id], references: [id]) // Uma variante pertence a um adicional
+
+  pedido_item_adicionais Pedido_item_adicional[] // Vezes que essa variante foi vendida
+}
+
+// =====================================================
+// ATENDIMENTO E PEDIDOS
+// =====================================================
+
+enum Tipo_atendimento {
+  BALCAO // Presencial no balcão
+  RETIRADA // Cliente busca
+  ENTREGA // Delivery
+  MESA // Consumo na mesa
+}
+
+enum Status_atendimento {
+  ABERTO // Conta aberta, recebendo pedidos
+  FECHADO // Conta paga e encerrada
+  CANCELADO // Cancelado (com motivo no log)
+}
+
+enum Status_pedido {
+  ENVIADO // Lançado, aguardando a cozinha
+  PREPARO // Cozinha começou
+  PRONTO // Pronto pra servir ou entregar
+  ENTREGUE // Entregue ao cliente
+  CANCELADO // Cancelado
+}
+
+model Mesa {
+  id     Int     @id @default(autoincrement())
+  numero Int     @unique // Número da mesa ex: 1, 2, 3
+  ativo  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  atendimentos Atendimento[] // Atendimentos dessa mesa
+}
+
+model Atendimento {
+  id                 Int                @id @default(autoincrement())
+  codigo_atendimento String             @unique // Gerado pelo sistema ex: AT0001
+  tipo_atendimento   Tipo_atendimento
+  status             Status_atendimento @default(ABERTO)
+
+  cliente_nome     String? // Nome do cliente (opcional) ex: João do boné
+  cliente_telefone String? // Delivery / contato
+  cliente_endereco String? // Delivery — texto livre na v1
+  observacao       String? // Observação geral (opcional)
+
+  // Ajustes enquanto aberto
+  desconto_centavos   Int     @default(0)
+  desconto_motivo     String?
+  acrescimo_centavos  Int     @default(0)
+  acrescimo_motivo    String?
+  taxa_servico_centavos Int   @default(0) // Valor aplicado (0 se recusou)
+  taxa_servico_aplicada Boolean @default(false)
+  taxa_entrega_centavos Int   @default(0) // Cópia no atendimento (ENTREGA)
+
+  // Totais congelados só no FECHAR (relatórios)
+  subtotal_centavos            Int?
+  total_desconto_centavos      Int?
+  total_acrescimo_centavos     Int?
+  total_taxa_servico_centavos  Int?
+  total_taxa_entrega_centavos  Int?
+  total_centavos               Int?
+
+  aberto_em  DateTime  @default(now())
+  fechado_em DateTime?
+
+  updatedAt DateTime @updatedAt
+
+  usuario_id Int
+  usuario    Usuario @relation("AtendimentoAbertura", fields: [usuario_id], references: [id])
+
+  desconto_usuario_id Int?
+  desconto_usuario    Usuario? @relation("AtendimentoDesconto", fields: [desconto_usuario_id], references: [id])
+
+  acrescimo_usuario_id Int?
+  acrescimo_usuario    Usuario? @relation("AtendimentoAcrescimo", fields: [acrescimo_usuario_id], references: [id])
+
+  mesa_id Int?
+  mesa    Mesa? @relation(fields: [mesa_id], references: [id]) // Só quando o tipo é MESA
+
+  pedidos             Pedido[]
+  pagamentos          Pagamento[]
+  trabalhos_impressao Trabalho_impressao[]
+}
+
+model Pedido {
+  id            Int           @id @default(autoincrement())
+  codigo_pedido String        @unique // Gerado pelo sistema ex: PD0001
+  status        Status_pedido @default(ENVIADO)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  atendimento_id Int
+  atendimento    Atendimento @relation(fields: [atendimento_id], references: [id]) // Um pedido pertence a um atendimento
+
+  itens               Pedido_item[] // Itens desse pedido
+  trabalhos_impressao Trabalho_impressao[]
+}
+
+model Pedido_item {
+  // ! 2 pastéis iguais mas só um com adicional = 2 itens diferentes
+  id Int @id @default(autoincrement())
+
+  // Cópia do momento da venda (histórico não muda se o cardápio mudar)
+  nome_produto   String // ex: Pastel de carne - Grande
+  preco_centavos Int // Preço unitário da variante na hora da venda
+  quantidade     Int     @default(1)
+  observacao     String? // ex: Sem cebola
+
+  cancelado              Boolean   @default(false)
+  cancelado_em           DateTime?
+  cancelado_motivo       String?
+  cancelado_usuario_id   Int?
+  cancelado_usuario      Usuario?  @relation("PedidoItemCancelamento", fields: [cancelado_usuario_id], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relações
+  pedido_id Int
+  pedido    Pedido @relation(fields: [pedido_id], references: [id]) // Um item pertence a um pedido
+
+  produto_variante_id Int
+  produto_variante    Produto_variante @relation(fields: [produto_variante_id], references: [id]) // O que foi vendido (relatório, ranking, estoque)
+
+  adicionais Pedido_item_adicional[] // Adicionais do item
+  escolhas   Pedido_item_escolha[] // Escolhas do item
+}
+
+model Pedido_item_adicional {
+  id Int @id @default(autoincrement())
+
+  // Cópia do momento da venda
+  nome_adicional String // ex: Bacon 50g
+  preco_centavos Int // Preço unitário na hora da venda
+  quantidade     Int    @default(1)
+
+  // Relações
+  pedido_item_id Int
+  pedido_item    Pedido_item @relation(fields: [pedido_item_id], references: [id])
+
+  adicional_variante_id Int
+  adicional_variante    Adicional_variante @relation(fields: [adicional_variante_id], references: [id])
+}
+
+model Pedido_item_escolha {
+  id Int @id @default(autoincrement())
+
+  // Cópia do momento da venda
+  nome_opcao           String // ex: Morango
+  preco_extra_centavos Int    @default(0)
+  quantidade           Int    @default(1) // Usado quando o grupo permite repetir
+
+  // Relações
+  pedido_item_id Int
+  pedido_item    Pedido_item @relation(fields: [pedido_item_id], references: [id])
+
+  opcao_escolha_id Int
+  opcao_escolha    Opcao_escolha @relation(fields: [opcao_escolha_id], references: [id])
+}
+
+// =====================================================
+// IMPRESSORAS (ESC/POS RAW — servidor imprime, não o browser)
+// =====================================================
+
+enum Tipo_conexao_impressora {
+  REDE // TCP IP:porta (padrão 9100)
+  SISTEMA // Spooler Windows / CUPS (fase posterior)
+}
+
+enum Status_impressora {
+  DESCONHECIDO
+  ONLINE
+  ERRO
+  INATIVA
+}
+
+enum Tipo_documento_impressao {
+  PRODUCAO
+  CONTA
+  COMPROVANTE
+  TESTE
+}
+
+enum Status_trabalho_impressao {
+  PENDENTE
+  IMPRIMINDO
+  IMPRESSO
+  ERRO
+}
+
+model Impressora {
+  id   Int    @id @default(autoincrement())
+  nome String // ex: Cozinha, Bar, Caixa
+
+  tipo_conexao Tipo_conexao_impressora @default(REDE)
+
+  // REDE
+  ip    String?
+  porta Int     @default(9100)
+
+  // SISTEMA
+  nome_sistema String?
+
+  largura_papel Int @default(80) // 58 ou 80
+  colunas       Int @default(48) // ~32 (58mm) / ~48 (80mm)
+  codificacao   String @default("CP860")
+  vias          Int    @default(1)
+
+  tem_guilhotina Boolean @default(true)
+  tem_gaveta     Boolean @default(false)
+  ativo          Boolean @default(true)
+
+  ultimo_status Status_impressora @default(DESCONHECIDO)
+  ultimo_erro   String?
+  testado_em    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  categorias Impressora_categoria[]
+  trabalhos  Trabalho_impressao[]
+
+  configs_conta Configuracao[] @relation("ConfigConta")
+  configs_caixa Configuracao[] @relation("ConfigCaixa")
+}
+
+model Impressora_categoria {
+  impressora_id Int
+  categoria_id  Int
+
+  impressora Impressora @relation(fields: [impressora_id], references: [id])
+  categoria  Categoria  @relation(fields: [categoria_id], references: [id])
+
+  @@id([impressora_id, categoria_id])
+}
+
+model Trabalho_impressao {
+  id Int @id @default(autoincrement())
+
+  tipo_documento Tipo_documento_impressao
+  conteudo       Bytes // payload ESC/POS RAW
+  status         Status_trabalho_impressao @default(PENDENTE)
+  tentativas     Int                       @default(0)
+  ultimo_erro    String?
+
+  criado_em   DateTime  @default(now())
+  impresso_em DateTime?
+
+  impressora_id Int
+  impressora    Impressora @relation(fields: [impressora_id], references: [id])
+
+  pedido_id Int?
+  pedido    Pedido? @relation(fields: [pedido_id], references: [id])
+
+  atendimento_id Int?
+  atendimento    Atendimento? @relation(fields: [atendimento_id], references: [id])
+}
+
+// =====================================================
+// OPERAÇÃO: sequências, pagamento, caixa, auditoria
+// =====================================================
+
+model Sequencia {
+  nome   String @id // "ATENDIMENTO" | "PEDIDO"
+  ultimo Int    @default(0)
+}
+
+model Forma_pagamento {
+  id          Int     @id @default(autoincrement())
+  nome        String  @unique // Dinheiro, Pix, Débito, Crédito, Vale-refeição
+  abre_gaveta Boolean @default(false) // Só dinheiro, em geral
+  ordem       Int     @default(0)
+  ativo       Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  pagamentos Pagamento[]
+}
+
+model Caixa_sessao {
+  id Int @id @default(autoincrement())
+
+  fundo_troco_centavos Int @default(0)
+
+  aberto_em  DateTime  @default(now())
+  fechado_em DateTime?
+
+  valor_esperado_centavos  Int? // Calculado no fechamento
+  valor_informado_centavos Int? // Contagem física
+  diferenca_centavos       Int?
+
+  usuario_abertura_id Int
+  usuario_abertura    Usuario @relation("CaixaAbertura", fields: [usuario_abertura_id], references: [id])
+
+  usuario_fechamento_id Int?
+  usuario_fechamento    Usuario? @relation("CaixaFechamento", fields: [usuario_fechamento_id], references: [id])
+
+  pagamentos     Pagamento[]
+  movimentacoes  Movimentacao_caixa[]
+}
+
+enum Tipo_movimentacao_caixa {
+  SANGRIA // Retirada de dinheiro
+  SUPRIMENTO // Entrada de troco
+}
+
+model Movimentacao_caixa {
+  id Int @id @default(autoincrement())
+
+  tipo           Tipo_movimentacao_caixa
+  valor_centavos Int
+  motivo         String
+
+  criado_em DateTime @default(now())
+
+  caixa_sessao_id Int
+  caixa_sessao    Caixa_sessao @relation(fields: [caixa_sessao_id], references: [id])
+
+  usuario_id Int
+  usuario    Usuario @relation(fields: [usuario_id], references: [id])
+}
+
+model Pagamento {
+  id Int @id @default(autoincrement())
+
+  valor_centavos          Int // Quanto deste pagamento abate da conta
+  valor_recebido_centavos Int // O que o cliente entregou (ex.: R$ 50 em dinheiro)
+  troco_centavos          Int @default(0) // recebido - valor (dinheiro)
+
+  criado_em DateTime @default(now())
+
+  atendimento_id Int
+  atendimento    Atendimento @relation(fields: [atendimento_id], references: [id])
+
+  forma_pagamento_id Int
+  forma_pagamento    Forma_pagamento @relation(fields: [forma_pagamento_id], references: [id])
+
+  caixa_sessao_id Int
+  caixa_sessao    Caixa_sessao @relation(fields: [caixa_sessao_id], references: [id])
+
+  usuario_id Int // Quem recebeu
+  usuario    Usuario @relation(fields: [usuario_id], references: [id])
+}
+
+model Log_auditoria {
+  id Int @id @default(autoincrement())
+
+  acao        String // ex: DESCONTO, CANCELAR_ITEM, ABRIR_GAVETA, JUNTAR_MESA, ROOT_ACAO
+  entidade    String // ex: Atendimento, Pedido_item, Caixa_sessao
+  entidade_id Int?
+  detalhes    String? // JSON ou texto livre
+
+  criado_em DateTime @default(now())
+
+  usuario_id Int
+  usuario    Usuario @relation(fields: [usuario_id], references: [id])
+}
