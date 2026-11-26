@@ -1,0 +1,23 @@
+{
+ "aberto": true,
+ "sessao": {
+  "id": 2,
+  "fundo_troco_centavos": 15000,
+  "aberto_em": "2026-11-26T08:07:55.210Z",
+  "fechado_em": null,
+  "valor_esperado_centavos": null,
+  "valor_informado_centavos": null,
+  "diferenca_centavos": null,
+  "usuario_abertura_id": 2,
+  "usuario_fechamento_id": null,
+  "usuario_abertura": {
+   "id": 2,
+   "nome": "Marta Gerente"
+  },
+  "_count": {
+   "pagamentos": 2,
+   "movimentacoes": 0
+  }
+ },
+ "tem_gaveta_disponivel": true
+}

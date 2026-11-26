@@ -1,0 +1,280 @@
+[
+ {
+  "id": 1,
+  "nome": "Pastéis",
+  "ordem": 1,
+  "produtos": [
+   {
+    "id": 2,
+    "nome": "Pastel Especial",
+    "descricao": null,
+    "caminho_imagem": null,
+    "exige_preparo": true,
+    "variantes": [
+     {
+      "id": 2,
+      "nome": "P",
+      "preco_centavos": 1200,
+      "grupos_escolhas": [
+       {
+        "id": 1,
+        "nome": "Molho",
+        "min_escolhas": 1,
+        "max_escolhas": 2,
+        "permite_repetir": false,
+        "ordem": 1,
+        "opcoes": [
+         {
+          "id": 1,
+          "nome": "Vinagrete",
+          "preco_extra_centavos": 0,
+          "ordem": 1
+         },
+         {
+          "id": 2,
+          "nome": "Catupiry",
+          "preco_extra_centavos": 250,
+          "ordem": 2
+         },
+         {
+          "id": 3,
+          "nome": "Pimenta",
+          "preco_extra_centavos": 0,
+          "ordem": 3
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "id": 3,
+      "nome": "G",
+      "preco_centavos": 1890,
+      "grupos_escolhas": []
+     }
+    ],
+    "grupos_adicionais": [
+     {
+      "id": 1,
+      "nome": "Extras",
+      "ordem": 1,
+      "adicionais": [
+       {
+        "id": 1,
+        "nome": "Bacon",
+        "qtd_max": 5,
+        "variantes": [
+         {
+          "id": 1,
+          "nome": "Padrão",
+          "preco_centavos": 300
+         }
+        ]
+       },
+       {
+        "id": 2,
+        "nome": "Queijo extra",
+        "qtd_max": 5,
+        "variantes": [
+         {
+          "id": 2,
+          "nome": "Padrão",
+          "preco_centavos": 200
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "preco_desde_centavos": 1200
+   },
+   {
+    "id": 3,
+    "nome": "Pastel Família",
+    "descricao": null,
+    "caminho_imagem": null,
+    "exige_preparo": true,
+    "variantes": [
+     {
+      "id": 4,
+      "nome": "Padrão",
+      "preco_centavos": 125000,
+      "grupos_escolhas": []
+     }
+    ],
+    "grupos_adicionais": [
+     {
+      "id": 1,
+      "nome": "Extras",
+      "ordem": 1,
+      "adicionais": [
+       {
+        "id": 1,
+        "nome": "Bacon",
+        "qtd_max": 5,
+        "variantes": [
+         {
+          "id": 1,
+          "nome": "Padrão",
+          "preco_centavos": 300
+         }
+        ]
+       },
+       {
+        "id": 2,
+        "nome": "Queijo extra",
+        "qtd_max": 5,
+        "variantes": [
+         {
+          "id": 2,
+          "nome": "Padrão",
+          "preco_centavos": 200
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "preco_desde_centavos": 125000
+   },
+   {
+    "id": 1,
+    "nome": "Pastel de Carne",
+    "descricao": null,
+    "caminho_imagem": null,
+    "exige_preparo": true,
+    "variantes": [
+     {
+      "id": 1,
+      "nome": "Padrão",
+      "preco_centavos": 1050,
+      "grupos_escolhas": []
+     }
+    ],
+    "grupos_adicionais": [
+     {
+      "id": 1,
+      "nome": "Extras",
+      "ordem": 1,
+      "adicionais": [
+       {
+        "id": 1,
+        "nome": "Bacon",
+        "qtd_max": 5,
+        "variantes": [
+         {
+          "id": 1,
+          "nome": "Padrão",
+          "preco_centavos": 300
+         }
+        ]
+       },
+       {
+        "id": 2,
+        "nome": "Queijo extra",
+        "qtd_max": 5,
+        "variantes": [
+         {
+          "id": 2,
+          "nome": "Padrão",
+          "preco_centavos": 200
+         }
+        ]
+       }
+      ]
+     }
+    ],
+    "preco_desde_centavos": 1050
+   }
+  ]
+ },
+ {
+  "id": 2,
+  "nome": "Bebidas",
+  "ordem": 2,
+  "produtos": [
+   {
+    "id": 4,
+    "nome": "Coca-Cola Lata",
+    "descricao": null,
+    "caminho_imagem": null,
+    "exige_preparo": false,
+    "variantes": [
+     {
+      "id": 5,
+      "nome": "Padrão",
+      "preco_centavos": 600,
+      "grupos_escolhas": []
+     }
+    ],
+    "grupos_adicionais": [],
+    "preco_desde_centavos": 600
+   },
+   {
+    "id": 5,
+    "nome": "Suco de Maracujá",
+    "descricao": null,
+    "caminho_imagem": null,
+    "exige_preparo": true,
+    "variantes": [
+     {
+      "id": 6,
+      "nome": "Padrão",
+      "preco_centavos": 900,
+      "grupos_escolhas": []
+     }
+    ],
+    "grupos_adicionais": [],
+    "preco_desde_centavos": 900
+   }
+  ]
+ },
+ {
+  "id": 3,
+  "nome": "Drinks",
+  "ordem": 3,
+  "produtos": [
+   {
+    "id": 6,
+    "nome": "Caipirinha de Limão",
+    "descricao": null,
+    "caminho_imagem": null,
+    "exige_preparo": true,
+    "variantes": [
+     {
+      "id": 7,
+      "nome": "Padrão",
+      "preco_centavos": 2200,
+      "grupos_escolhas": []
+     }
+    ],
+    "grupos_adicionais": [],
+    "preco_desde_centavos": 2200
+   }
+  ]
+ },
+ {
+  "id": 4,
+  "nome": "Sobremesas",
+  "ordem": 4,
+  "produtos": [
+   {
+    "id": 7,
+    "nome": "Açaí 500ml",
+    "descricao": null,
+    "caminho_imagem": null,
+    "exige_preparo": true,
+    "variantes": [
+     {
+      "id": 8,
+      "nome": "Padrão",
+      "preco_centavos": 1990,
+      "grupos_escolhas": []
+     }
+    ],
+    "grupos_adicionais": [],
+    "preco_desde_centavos": 1990
+   }
+  ]
+ }
+]
