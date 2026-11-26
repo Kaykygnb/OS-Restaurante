@@ -1,3 +1,4 @@
+import Formulario from "../componentes/Formulario";
 import { useState } from "react";
 import { Faixa } from "../componentes/ui/Estados";
 import { useSistema } from "../estado/sistema-ctx";
@@ -20,7 +21,7 @@ export default function Aparelho() {
   }
 
   return (
-    <form className="cartao pilha" style={{ maxWidth: 560 }} onSubmit={salvar}>
+    <Formulario className="cartao pilha" style={{ maxWidth: 560 }} onSubmit={salvar}>
       <h2>Nome deste aparelho</h2>
       <p className="muted" style={{ margin: 0 }}>
         Aparece na auditoria ao lado de cada ação (ex.: “Caixa”, “Tablet da cozinha”, “Celular do Zé”). Vale só para este aparelho e este navegador.
@@ -36,6 +37,6 @@ export default function Aparelho() {
           Salvar
         </button>
       </div>
-    </form>
+    </Formulario>
   );
 }

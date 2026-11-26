@@ -1,3 +1,4 @@
+import Formulario from "../../componentes/Formulario";
 import { useState } from "react";
 import Dialogo from "../../componentes/ui/Dialogo";
 import Icone from "../../componentes/ui/Icone";
@@ -59,7 +60,7 @@ export default function OpcoesProduto({ produto, inicial, onAdicionar, onFechar 
         </>
       }
     >
-      <form
+      <Formulario
         className="pilha"
         onSubmit={(e) => {
           e.preventDefault();
@@ -159,7 +160,7 @@ export default function OpcoesProduto({ produto, inicial, onAdicionar, onFechar 
           </p>
         ) : null}
         <button type="submit" hidden />
-      </form>
+      </Formulario>
     </Dialogo>
   );
 }

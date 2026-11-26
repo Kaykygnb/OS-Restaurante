@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -24,6 +24,8 @@ export type Harness = {
 export async function montarHarness(): Promise<Harness> {
   const dir = await mkdtemp(path.join(tmpdir(), "os-rest-test-"));
   const dbPath = path.join(dir, "test.db").replace(/\\/g, "/");
+  // O engine SQLite no Windows exige o arquivo antes de aplicar migrations.
+  await writeFile(dbPath, "");
   process.env.DATABASE_URL = `file:${dbPath}`;
   process.env.JWT_SECRET = process.env.JWT_SECRET || "segredo-teste-passo1";
 

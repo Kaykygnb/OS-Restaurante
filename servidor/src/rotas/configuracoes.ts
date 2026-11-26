@@ -3,6 +3,7 @@ import { prisma } from "../db.js";
 import { soTipos } from "../permissoes.js";
 
 type BodyConfig = {
+  estoque_nivel?: number;
   nome_restaurante?: string;
   nome_fantasia?: string | null;
   cnpj?: string | null;
@@ -43,6 +44,7 @@ const TIPOS_DOC = [
 function camposEditaveis(body: BodyConfig) {
   const data: Record<string, unknown> = {};
   const keys: (keyof BodyConfig)[] = [
+    "estoque_nivel",
     "nome_restaurante",
     "nome_fantasia",
     "cnpj",
@@ -164,6 +166,9 @@ export async function rotasConfiguracoes(app: FastifyInstance) {
   app.put("/configuracoes", auth, async (req, reply) => {
     const body = req.body as BodyConfig;
     const data = camposEditaveis(body);
+    if (body.estoque_nivel !== undefined && (!Number.isInteger(body.estoque_nivel) || body.estoque_nivel < 0 || body.estoque_nivel > 2)) {
+      return reply.code(400).send({ erro: "Nível de estoque deve ser 0, 1 ou 2" });
+    }
 
     if (body.taxa_entrega_centavos !== undefined) {
       if (!Number.isFinite(body.taxa_entrega_centavos) || body.taxa_entrega_centavos < 0) {

@@ -1,3 +1,5 @@
+import { lerDashboard } from "../servicos/rotas";
+import type { Dashboard } from "../servicos/contratos";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { itensDoPerfil } from "../auth/navegacao";
@@ -18,7 +20,6 @@ const ACOES = [
   { to: "/painel/caixa", titulo: "Caixa", sub: "Sangria, fechar o dia", icone: "caixa", atalho: "F8" },
 ] as const;
 
-const hoje = (iso?: string | null) => !!iso && new Date(iso).toDateString() === new Date().toDateString();
 
 /**
  * Pranchas 03a–03c: Início por perfil. Os números saem de GET /atendimentos enquanto não existe
@@ -32,26 +33,28 @@ export default function Inicio() {
   const acoes = ACOES.filter((a) => permitidos.has(a.to.replace("/novo", "")));
   const [ats, setAts] = useState<AtResumo[] | null>(null);
   const [erro, setErro] = useState("");
+  const [resumo, setResumo] = useState<Dashboard | null>(null);
 
   const carregar = useCallback(() => {
-    api("/atendimentos")
-      .then((r: AtResumo[]) => {
+    const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+    Promise.all([api("/atendimentos?status=ABERTO") as Promise<AtResumo[]>, gestao ? lerDashboard({ de: hoje, ate: hoje }) : Promise.resolve(null)])
+      .then(([r, dashboard]) => {
+        setResumo(dashboard);
         setAts(Array.isArray(r) ? r : []);
         setErro("");
       })
       .catch((e: ApiErro) => setErro(e.message));
-  }, []);
+  }, [gestao]);
   useEffect(carregar, [carregar]);
 
-  const fechadosHoje = (ats ?? []).filter((a) => a.status === "FECHADO" && hoje(a.fechado_em ?? a.aberto_em));
-  const vendido = fechadosHoje.reduce((s, a) => s + (a.total_centavos ?? 0), 0);
+  const vendido = resumo?.faturamento_centavos ?? 0;
   const mesasAbertas = (ats ?? []).filter((a) => a.status === "ABERTO" && a.tipo_atendimento === "MESA");
   const deliveries = (ats ?? []).filter((a) => a.status === "ABERTO" && a.tipo_atendimento === "ENTREGA");
   const atencao: { tom: "warn" | "err" | "info"; texto: string; to: string; botao: string }[] = [];
   if (caixa && !caixa.aberto && podeOperarCaixa(usuario)) atencao.push({ tom: "warn", texto: "O caixa está fechado: ninguém consegue receber.", to: "/painel/caixa", botao: "Abrir caixa" });
-  if (gestao) atencao.push({ tom: "info", texto: "Garçons no celular: mostre o QR deste PC para conectar pelo navegador ou pelo app Android.", to: "/painel/conectar", botao: "Conectar celulares" });
+
   if (gestao && modulos.estoque_nivel === 0)
-    atencao.push({ tom: "info", texto: "Controle de estoque desligado. Ligue quando quiser marcar esgotados ou contar bebidas.", to: "/painel/estoque", botao: "Ver níveis" });
+    atencao.push({ tom: "info", texto: "Controle de estoque desligado. Ligue quando quiser marcar esgotados ou contar bebidas.", to: "/painel/configuracoes?aba=operacao", botao: "Configurar estoque" });
 
   const data = new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" });
 
@@ -66,7 +69,7 @@ export default function Inicio() {
           <div className="cartao">
             <div className="muted pequeno">Vendido hoje</div>
             <div className="valor-g">{ats ? formatarReais(vendido) : "…"}</div>
-            <div className="muted pequeno">{fechadosHoje.length} vendas</div>
+            <div className="muted pequeno">{(resumo?.atendimentos ?? 0)} vendas</div>
           </div>
           <div className="cartao">
             <div className="muted pequeno">Mesas abertas</div>
@@ -78,7 +81,7 @@ export default function Inicio() {
           </div>
           <div className="cartao">
             <div className="muted pequeno">Ticket médio</div>
-            <div className="valor-g">{ats ? formatarReais(fechadosHoje.length ? Math.round(vendido / fechadosHoje.length) : 0) : "…"}</div>
+            <div className="valor-g">{ats ? formatarReais(resumo?.ticket_medio_centavos ?? 0) : "…"}</div>
           </div>
         </div>
       ) : null}

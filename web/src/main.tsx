@@ -1,13 +1,15 @@
+import DialogosProvider from "./componentes/DialogosProvider";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./estilos/global.css";
 // Redesenho: base neutra (fonte do sistema, 1 cor de ação). Vem depois para valer sobre o global.
 import "./estilos/ui.css";
+import "./estilos/ux.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <DialogosProvider><App /></DialogosProvider>
   </StrictMode>,
 );
 

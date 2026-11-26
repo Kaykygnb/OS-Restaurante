@@ -1,3 +1,4 @@
+import Formulario from "../componentes/Formulario";
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { telaInicial } from "../auth/sessao";
@@ -81,7 +82,7 @@ export default function Entrar() {
 
   return (
     <div className="entrar">
-      <form onSubmit={enviar} noValidate aria-describedby={erro ? "entrar-erro" : undefined}>
+      <Formulario onSubmit={enviar} noValidate aria-describedby={erro ? "entrar-erro" : undefined}>
         <div>
           <h1>Entrar</h1>
           <p className="muted" style={{ margin: "4px 0 0" }}>
@@ -140,7 +141,7 @@ export default function Entrar() {
         <p className="muted pequeno" style={{ margin: 0, textAlign: "center" }}>
           Esqueceu a senha? Peça ao gerente.
         </p>
-      </form>
+      </Formulario>
       <p className="servidor" style={{ color: servidor === "off" ? "var(--err)" : servidor === "ok" ? "var(--ok)" : "var(--ink3)" }}>
         {servidor === "off" ? "Servidor: sem conexão com o PC do caixa" : servidor === "ok" ? "Servidor: PC do caixa · conectado" : "Procurando o servidor…"}
       </p>

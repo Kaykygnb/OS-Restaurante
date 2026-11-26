@@ -1,3 +1,6 @@
+import { useProtecaoEdicao } from "../hooks/useRascunho";
+import Dialogo from "../componentes/ui/Dialogo";
+import AtendimentoAcoes from "../componentes/AtendimentoAcoes";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
@@ -19,6 +22,7 @@ import {
 } from "./pdv-regras";
 
 type Variante = {
+  esgotado?: boolean;
   id: number;
   nome: string;
   preco_centavos: number;
@@ -29,6 +33,7 @@ type ProdutoPdv = {
   id: number;
   nome: string;
   exige_preparo: boolean;
+  esgotado?: boolean;
   preco_desde_centavos?: number;
   variantes: Variante[];
   grupos_adicionais: {
@@ -45,8 +50,10 @@ type ItemEnviado = {
   quantidade: number;
   observacao: string | null;
   cancelado: boolean;
-  escolhas?: { nome_opcao: string; quantidade: number }[];
-  adicionais?: { nome_adicional: string; quantidade: number }[];
+  preco_centavos: number;
+  total_centavos?: number;
+  escolhas?: { nome_opcao: string; quantidade: number; preco_extra_centavos: number }[];
+  adicionais?: { nome_adicional: string; quantidade: number; preco_centavos: number }[];
 };
 type AtendimentoPdv = {
   id: number;
@@ -132,21 +139,17 @@ export default function Pdv() {
     [produto, varianteId]
   );
 
+  const liberarRascunho = useProtecaoEdicao(`pdv:${id}`, carrinho.length > 0);
   const totalCarrinho = useMemo(() => carrinho.reduce((s, l) => s + linhaCentavos(l), 0), [carrinho]);
   const qtdCarrinho = useMemo(() => carrinho.reduce((s, l) => s + l.quantidade, 0), [carrinho]);
-  const jaPedido = useMemo(
-    () =>
-      (atendimento?.pedidos ?? []).flatMap((p) =>
-        p.itens.map((i) => ({ ...i, codigo_pedido: p.codigo_pedido }))
-      ),
-    [atendimento]
-  );
-
+  const produtosCarrinho = new Set(carrinho.map(l => cats.flatMap(c => c.produtos).find(p => p.variantes.some(v => v.id === l.produto_variante_id))?.id ?? l.produto_variante_id)).size;
+  const contagem = `${qtdCarrinho} ${qtdCarrinho === 1 ? "unidade" : "unidades"} · ${produtosCarrinho} ${produtosCarrinho === 1 ? "produto" : "produtos"}`;
   if (!idValido) return <Navigate to="/painel/mesas" replace />;
 
   function abrirProduto(p: ProdutoPdv) {
+    if (p.esgotado || p.variantes.every(v => v.esgotado)) return setErro("Este produto está esgotado.");
     setProduto(p);
-    setVarianteId(p.variantes[0]?.id ?? null);
+    setVarianteId(p.variantes.find(v => !v.esgotado)?.id ?? null);
     setQtdItem(1);
     setEscolhasSel({});
     setAdicionaisSel({});
@@ -174,7 +177,11 @@ export default function Pdv() {
     setAdicionaisSel(n);
   }
 
+  const totalMontagem = Math.max(1, qtdItem) * ((variante?.preco_centavos ?? 0)
+    + (variante?.grupos_escolhas ?? []).flatMap(g => g.opcoes).reduce((s,o) => s + o.preco_extra_centavos * (escolhasSel[o.id] ?? 0), 0)
+    + (produto?.grupos_adicionais ?? []).flatMap(g => g.adicionais).flatMap(a => a.variantes).reduce((s,v) => s + v.preco_centavos * (adicionaisSel[v.id] ?? 0), 0));
   function addCarrinho() {
+    if (produto?.esgotado || produto?.variantes.find(v => v.id === varianteId)?.esgotado) return setAvisoMontagem("Esta opção está esgotada.");
     if (!produto || !variante) return;
     for (const g of variante.grupos_escolhas) {
       const total = g.opcoes.reduce((s, o) => s + (escolhasSel[o.id] ?? 0), 0);
@@ -253,7 +260,7 @@ export default function Pdv() {
       })) as { pedido: { codigo_pedido: string }; impressao?: { avisos?: string[] } };
       setOk(`Pedido ${res.pedido.codigo_pedido} enviado`);
       setAvisos(res.impressao?.avisos ?? []);
-      setCarrinho([]);
+      liberarRascunho(); setCarrinho([]);
       apagarRascunho(id);
       chaveEnvio.current = null;
       setCarrinhoAberto(false);
@@ -267,8 +274,7 @@ export default function Pdv() {
   }
 
   function sairPara(para: string) {
-    if (carrinho.length) setConfirmar({ tipo: "sair", para });
-    else navegar(para);
+    navegar(para);
   }
 
   if (!atendimento) {
@@ -308,7 +314,7 @@ export default function Pdv() {
           <p>
             {atendimento.codigo_atendimento}
             {atendimento.cliente_nome ? ` · ${atendimento.cliente_nome}` : ""}
-            {" · conta "}
+            {" · conta já lançada "}
             {formatarReais(atendimento.totais?.total_centavos ?? 0)}
           </p>
         </div>
@@ -323,33 +329,7 @@ export default function Pdv() {
       </section>
 
       <Avisos erro={erro} ok={ok} avisos={avisos} />
-
-      {jaPedido.length ? (
-        <details className="pdv-ja-pedido painel-bloco">
-          <summary>
-            Já pedido nesta conta · {jaPedido.filter((i) => !i.cancelado).reduce((s, i) => s + i.quantidade, 0)}{" "}
-            item(ns)
-          </summary>
-          <ul>
-            {jaPedido.map((i) => (
-              <li key={i.id} className={i.cancelado ? "cancelado" : ""}>
-                <strong>
-                  {i.quantidade}× {i.nome_produto}
-                </strong>
-                <span>
-                  {i.codigo_pedido}
-                  {[...(i.escolhas ?? []).map((e) => e.nome_opcao), ...(i.adicionais ?? []).map((a) => `+ ${a.nome_adicional}`)]
-                    .filter(Boolean)
-                    .map((t) => ` · ${t}`)
-                    .join("")}
-                  {i.observacao ? ` · ${i.observacao}` : ""}
-                  {i.cancelado ? " · cancelado" : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      ) : null}
+      <AtendimentoAcoes atendimento={atendimento} onAtualizar={carregar} />
 
       <div className="pdv-layout">
         <section className="painel-bloco pdv-catalogo">
@@ -392,9 +372,10 @@ export default function Pdv() {
                   key={p.id}
                   type="button"
                   className={`pdv-prod${produto?.id === p.id ? " ativo" : ""}`}
+                  disabled={p.esgotado || p.variantes.every(v => v.esgotado)}
                   onClick={() => abrirProduto(p)}
                 >
-                  <strong>{p.nome}</strong>
+                  <strong>{p.nome}{p.esgotado || p.variantes.every(v => v.esgotado) ? " · Esgotado" : ""}</strong>
                   <span>
                     {p.variantes.length > 1 ? "a partir de " : ""}
                     {formatarReais(precoDesde(p))}
@@ -405,18 +386,8 @@ export default function Pdv() {
             )}
           </div>
           {produto && variante ? (
-            <>
-              <button type="button" className="folha-fundo" aria-label="Fechar item" onClick={() => setProduto(null)} />
-              <div className="pdv-montagem folha" role="dialog" aria-label={`Montar ${produto.nome}`}>
-                <div className="form-produto-titulo">
-                  <div>
-                    <span className="painel-sobretitulo">MONTAR</span>
-                    <strong>{produto.nome}</strong>
-                  </div>
-                  <button type="button" className="btn-ghost drawer-fechar" aria-label="Fechar" onClick={() => setProduto(null)}>
-                    ×
-                  </button>
-                </div>
+            <Dialogo titulo={`Montar ${produto.nome}`} onFechar={() => setProduto(null)} pe={<><strong className="montagem-total">{formatarReais(totalMontagem)}</strong><button type="button" className="btn btn-pri" onClick={addCarrinho}>Adicionar ao pedido</button></>}>
+              <div className="pilha">
 
                 {produto.variantes.length > 1 ? (
                   <div className="pdv-chips" role="radiogroup" aria-label="Tamanho / opção de preço">
@@ -424,6 +395,7 @@ export default function Pdv() {
                       <button
                         key={v.id}
                         type="button"
+                        disabled={v.esgotado}
                         role="radio"
                         aria-checked={variante.id === v.id}
                         className={`pdv-chip${variante.id === v.id ? " on" : ""}`}
@@ -543,20 +515,18 @@ export default function Pdv() {
                     placeholder="Observação (opcional)"
                     aria-label="Observação do item"
                   />
-                  <button type="button" className="btn-prim" onClick={addCarrinho}>
-                    Adicionar
-                  </button>
+
                 </div>
               </div>
-            </>
+            </Dialogo>
           ) : null}
         </section>
 
         <aside className={`painel-bloco pdv-carrinho${carrinhoAberto ? " aberto" : ""}`} aria-label="Pedido atual">
           <header className="pdv-carrinho-cab">
             <div>
-              <span className="painel-sobretitulo">PEDIDO ATUAL</span>
-              <strong>{qtdCarrinho} item(ns)</strong>
+              <span className="painel-sobretitulo">NOVOS ITENS A ENVIAR</span>
+              <strong>{contagem}</strong>
             </div>
             <strong className="pdv-carrinho-total">{formatarReais(totalCarrinho)}</strong>
             <button
@@ -665,7 +635,7 @@ export default function Pdv() {
       {carrinho.length && !carrinhoAberto ? (
         <button type="button" className="pdv-barra-carrinho" onClick={() => setCarrinhoAberto(true)}>
           <span>
-            {qtdCarrinho} item(ns) · {formatarReais(totalCarrinho)}
+            {contagem} · {formatarReais(totalCarrinho)}
           </span>
           <strong>Ver pedido</strong>
         </button>
@@ -679,12 +649,12 @@ export default function Pdv() {
           perigo
           onFechar={() => setConfirmar(null)}
           onConfirmar={() => {
-            setCarrinho([]);
+            liberarRascunho(); setCarrinho([]);
             apagarRascunho(id);
             setConfirmar(null);
           }}
         >
-          <p className="ajuda">Os {qtdCarrinho} item(ns) ainda não enviados saem do pedido.</p>
+          <p className="ajuda">Os {contagem} ainda não enviados saem do pedido.</p>
         </Modal>
       ) : null}
 
@@ -697,7 +667,7 @@ export default function Pdv() {
           onConfirmar={() => navegar(confirmar.para)}
         >
           <p className="ajuda">
-            Há {qtdCarrinho} item(ns) que a cozinha ainda não recebeu. Eles ficam guardados neste aparelho e voltam
+            Há {contagem} que a cozinha ainda não recebeu. Eles ficam guardados neste aparelho e voltam
             quando você abrir esta conta de novo.
           </p>
         </Modal>

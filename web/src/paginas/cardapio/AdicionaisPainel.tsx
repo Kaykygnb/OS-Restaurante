@@ -1,3 +1,6 @@
+import { lerRascunhoSeguro, podeTrocarEdicao, useEdicaoPendente } from "../../hooks/useRascunho";
+import Formulario from "../../componentes/Formulario";
+import { confirmar } from "../../servicos/dialogos";
 import { useCallback, useEffect, useState } from "react";
 import Ajuda from "../../componentes/Ajuda";
 import { api } from "../../servicos/api";
@@ -19,15 +22,18 @@ function novaLinha(nome = "Padrão"): LinhaVariante {
   return { chave: crypto.randomUUID(), nome, preco: "0" };
 }
 
-export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) {
+export default function AdicionaisPainel({ categorias, setErro: reportarErro, setOk }: Props) {
+  const [erroLocal, setErroLocal] = useState("");
+  const setErro = useCallback((mensagem: string) => { setErroLocal(mensagem); reportarErro(mensagem); }, [reportarErro]);
   const [grupos, setGrupos] = useState<GrupoAdicionais[]>([]);
   const [grupoId, setGrupoId] = useState<number | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [salvando, setSalvando] = useState(false);
 
+  const r = lerRascunhoSeguro<{ nomeGrupoNovo: string; catsGrupoNovo: number[] }>("adicionais:grupo-novo");
   const [criandoGrupo, setCriandoGrupo] = useState(false);
-  const [nomeGrupoNovo, setNomeGrupoNovo] = useState("");
-  const [catsGrupoNovo, setCatsGrupoNovo] = useState<number[]>([]);
+  const [nomeGrupoNovo, setNomeGrupoNovo] = useState(r?.nomeGrupoNovo ?? "");
+  const [catsGrupoNovo, setCatsGrupoNovo] = useState<number[]>(r?.catsGrupoNovo ?? []);
 
   const [editNomeGrupo, setEditNomeGrupo] = useState("");
   const [editCatsGrupo, setEditCatsGrupo] = useState<number[]>([]);
@@ -48,6 +54,9 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
 
   const [exclusaoProdutoId, setExclusaoProdutoId] = useState<number | "">("");
 
+  const marcarAdicionalSalvo = useEdicaoPendente(`adicionais:novo:${grupoId}`, { nomeAdicional, qtdMax, variantes, caminhoImagem }, !!grupoId && !carregando);
+  const marcarEdicaoGrupoSalva = useEdicaoPendente(`adicionais:grupo:${grupoId}`, { editNomeGrupo, editCatsGrupo }, !!grupoId && !carregando);
+  const marcarGrupoSalvo = useEdicaoPendente("adicionais:grupo-novo", { nomeGrupoNovo, catsGrupoNovo }, criandoGrupo);
   const carregar = useCallback(async () => {
     setCarregando(true);
     setErro("");
@@ -77,8 +86,11 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
   const [grupoNoForm, setGrupoNoForm] = useState<number | null | undefined>(undefined);
   if (grupoNoForm !== idSelecionado) {
     setGrupoNoForm(idSelecionado);
-    setEditNomeGrupo(selecionado?.nome ?? "");
-    setEditCatsGrupo(selecionado ? selecionado.categorias.map((c) => c.categoria_id) : []);
+    const r = lerRascunhoSeguro<{ editNomeGrupo: string; editCatsGrupo: number[] }>(`adicionais:grupo:${idSelecionado}`);
+    setEditNomeGrupo(r?.editNomeGrupo ?? selecionado?.nome ?? "");
+    setEditCatsGrupo(r?.editCatsGrupo ?? (selecionado ? selecionado.categorias.map((c) => c.categoria_id) : []));
+    const ad = lerRascunhoSeguro<{ nomeAdicional: string; qtdMax: string; variantes: LinhaVariante[]; caminhoImagem: string | null }>(`adicionais:novo:${idSelecionado}`);
+    setNomeAdicional(ad?.nomeAdicional ?? ""); setQtdMax(ad?.qtdMax ?? "5"); setVariantes(ad?.variantes ?? [novaLinha()]); setCaminhoImagem(ad?.caminhoImagem ?? null); setArquivoImagem(null);
     if (selecionado) setEditandoAdicionalId(null);
   }
 
@@ -107,7 +119,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
         method: "POST",
         body: JSON.stringify({ nome: nomeGrupoNovo.trim(), categoria_ids: catsGrupoNovo }),
       })) as GrupoAdicionais;
-      setNomeGrupoNovo("");
+      marcarGrupoSalvo(); setNomeGrupoNovo("");
       setCatsGrupoNovo([]);
       setCriandoGrupo(false);
       setOk("Grupo de adicionais criado");
@@ -135,7 +147,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
           categoria_ids: editCatsGrupo,
         }),
       });
-      setOk("Grupo atualizado");
+      marcarEdicaoGrupoSalva(); setOk("Grupo atualizado");
       await carregar();
     } catch (err) {
       setErro((err as Error).message);
@@ -145,7 +157,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
   }
 
   async function excluirGrupo(id: number) {
-    if (!confirm("Excluir este grupo e seus adicionais?")) return;
+    if (!(await confirmar("Excluir este grupo e seus adicionais?"))) return;
     setErro("");
     try {
       await api(`/grupos-adicionais/${id}`, { method: "DELETE" });
@@ -188,7 +200,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
           body: JSON.stringify({ caminho_imagem: caminho }),
         });
       }
-      setNomeAdicional("");
+      marcarAdicionalSalvo(); setNomeAdicional("");
       setQtdMax("5");
       setVariantes([novaLinha()]);
       setArquivoImagem(null);
@@ -277,7 +289,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
       return;
     }
     if (editandoAdicionalId && linha.id) {
-      if (!confirm(`Remover a opção "${linha.nome}"?`)) return;
+      if (!(await confirmar(`Remover a opção "${linha.nome}"?`))) return;
       setErro("");
       try {
         await api(`/adicionais/${editandoAdicionalId}/variantes/${linha.id}`, { method: "DELETE" });
@@ -293,7 +305,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
   }
 
   async function excluirAdicional(id: number) {
-    if (!confirm("Excluir este adicional?")) return;
+    if (!(await confirmar("Excluir este adicional?"))) return;
     setErro("");
     try {
       await api(`/adicionais/${id}`, { method: "DELETE" });
@@ -348,23 +360,54 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
         <button
           type="button"
           className="btn-prim btn-bloco"
-          onClick={() => setCriandoGrupo((v) => !v)}
+          onClick={async () => { if (await podeTrocarEdicao()) setCriandoGrupo(v => !v); }}
         >
           {criandoGrupo ? "Cancelar" : "Novo grupo"}
         </button>
 
+        <ul className="lista-cat" style={{ marginTop: 12 }}>
+          {grupos.length === 0 && !carregando ? <li className="vazio">Nenhum grupo ainda.</li> : null}
+          {grupos.map((g) => (
+            <li key={g.id} className="cat-linha cat-linha-simples">
+              <button
+                type="button"
+                className={`cat-item${g.id === grupoId ? " ativa" : ""}`}
+                onClick={async () => { if (await podeTrocarEdicao()) setGrupoId(g.id); }}
+              >
+                <span className="cat-nome">{g.nome}</span>
+                <span className="cat-qtd">{g.adicionais.length}</span>
+              </button>
+              <div className="cat-acoes">
+                <button
+                  type="button"
+                  className="btn-icon btn-icon-danger"
+                  aria-label={`Excluir grupo ${g.nome}`}
+                  title="Excluir"
+                  onClick={async () => void excluirGrupo(g.id)}
+                >
+                  ×
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="painel-bloco painel-lista">
+        {erroLocal ? <p role="alert" className="feedback-card feedback-erro">{erroLocal}</p> : null}
         {criandoGrupo ? (
-          <form className="form-drawer" onSubmit={criarGrupo}>
+          <Formulario className="form-drawer" onSubmit={criarGrupo}>
+            <h2>Novo grupo de adicionais</h2><p>As opções deste grupo aparecerão nos produtos de todas as categorias marcadas.</p>
             <label className="campo">
               <span>Nome</span>
               <input
                 value={nomeGrupoNovo}
                 onChange={(e) => setNomeGrupoNovo(e.target.value)}
-                placeholder="Ex: Proteínas"
+                placeholder="Ex: Proteínas" required minLength={2}
               />
             </label>
             <div className="campo">
-              <span>Categorias</span>
+              <span>Categorias * — escolha ao menos uma</span>
               <div className="chips">
                 {categorias.map((c) => (
                   <label key={c.id} className={`chip${catsGrupoNovo.includes(c.id) ? " on" : ""}`}>
@@ -381,38 +424,9 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
             <button type="submit" className="btn-prim" disabled={salvando}>
               Criar
             </button>
-          </form>
+          </Formulario>
         ) : null}
 
-        <ul className="lista-cat" style={{ marginTop: 12 }}>
-          {grupos.length === 0 && !carregando ? <li className="vazio">Nenhum grupo ainda.</li> : null}
-          {grupos.map((g) => (
-            <li key={g.id} className="cat-linha cat-linha-simples">
-              <button
-                type="button"
-                className={`cat-item${g.id === grupoId ? " ativa" : ""}`}
-                onClick={() => setGrupoId(g.id)}
-              >
-                <span className="cat-nome">{g.nome}</span>
-                <span className="cat-qtd">{g.adicionais.length}</span>
-              </button>
-              <div className="cat-acoes">
-                <button
-                  type="button"
-                  className="btn-icon btn-icon-danger"
-                  aria-label={`Excluir grupo ${g.nome}`}
-                  title="Excluir"
-                  onClick={() => void excluirGrupo(g.id)}
-                >
-                  ×
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="painel-bloco painel-lista">
         {!selecionado ? (
           <p className="vazio">Selecione ou crie um grupo.</p>
         ) : (
@@ -422,7 +436,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
               <span>{selecionado.adicionais.length}</span>
             </header>
 
-            <form className="drawer-bloco form-drawer" onSubmit={salvarGrupo}>
+            <Formulario className="drawer-bloco form-drawer" onSubmit={salvarGrupo}>
               <p className="bloco-variante-titulo titulo-com-ajuda">
                 Grupo e categorias
                 <Ajuda texto="Marque as categorias em que este grupo de adicionais deve aparecer no pedido." />
@@ -452,9 +466,9 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
               <button type="submit" className="btn-sec" disabled={salvando}>
                 Salvar grupo
               </button>
-            </form>
+            </Formulario>
 
-            <form className="drawer-bloco form-drawer" onSubmit={criarAdicional}>
+            <Formulario className="drawer-bloco form-drawer" onSubmit={criarAdicional}>
               <p className="bloco-variante-titulo titulo-com-ajuda">
                 Novo adicional
                 <Ajuda texto="Item extra com preço próprio (ex.: Bacon). Pode ter várias opções de preço (50g / 100g)." />
@@ -485,7 +499,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
                   <button
                     type="button"
                     className="btn-sec"
-                    onClick={() => setVariantes((v) => [...v, novaLinha(`Opção ${v.length + 1}`)])}
+                    onClick={async () => setVariantes((v) => [...v, novaLinha(`Opção ${v.length + 1}`)])}
                   >
                     + opção
                   </button>
@@ -516,7 +530,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
                         type="button"
                         className="btn-ghost"
                         disabled={variantes.length <= 1}
-                        onClick={() => setVariantes((lista) => lista.filter((x) => x.chave !== v.chave))}
+                        onClick={async () => setVariantes((lista) => lista.filter((x) => x.chave !== v.chave))}
                       >
                         Remover
                       </button>
@@ -527,7 +541,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
               <button type="submit" className="btn-prim" disabled={salvando}>
                 Adicionar
               </button>
-            </form>
+            </Formulario>
 
             <ul className="lista-prod">
               {selecionado.adicionais.length === 0 ? (
@@ -536,7 +550,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
               {selecionado.adicionais.map((a) => (
                 <li key={a.id} className={`prod-item${editandoAdicionalId === a.id ? " editando" : ""}`}>
                   {editandoAdicionalId === a.id ? (
-                    <form className="form-drawer form-edit-adic" onSubmit={salvarAdicional}>
+                    <Formulario className="form-drawer form-edit-adic" onSubmit={salvarAdicional}>
                       <CampoImagem
                         caminho={editCaminhoImagem}
                         onArquivo={(arquivo) => { setEditArquivoImagem(arquivo); if (arquivo) setEditRemoverImagem(false); }}
@@ -560,7 +574,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
                           <button
                             type="button"
                             className="btn-sec"
-                            onClick={() =>
+                            onClick={async () =>
                               setEditVariantes((v) => [...v, novaLinha(`Opção ${v.length + 1}`)])
                             }
                           >
@@ -595,7 +609,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
                                 type="button"
                                 className="btn-ghost"
                                 disabled={editVariantes.length <= 1}
-                                onClick={() => void removerOpcaoAdicional(v)}
+                                onClick={async () => void removerOpcaoAdicional(v)}
                               >
                                 Remover
                               </button>
@@ -610,12 +624,12 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
                         <button
                           type="button"
                           className="btn-ghost"
-                          onClick={() => setEditandoAdicionalId(null)}
+                          onClick={async () => setEditandoAdicionalId(null)}
                         >
                           Cancelar
                         </button>
                       </div>
-                    </form>
+                    </Formulario>
                   ) : (
                     <>
                       <img
@@ -638,14 +652,14 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
                         <button
                           type="button"
                           className="btn-ghost"
-                          onClick={() => abrirEditarAdicional(a)}
+                          onClick={async () => abrirEditarAdicional(a)}
                         >
                           Editar
                         </button>
                         <button
                           type="button"
                           className="btn-ghost"
-                          onClick={() => void excluirAdicional(a.id)}
+                          onClick={async () => void excluirAdicional(a.id)}
                         >
                           Excluir
                         </button>
@@ -664,7 +678,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
               <p className="ajuda">
                 Produtos da categoria que <em>não</em> devem mostrar estes adicionais.
               </p>
-              <form className="form-inline" onSubmit={adicionarExclusao}>
+              <Formulario className="form-inline" onSubmit={adicionarExclusao}>
                 <select
                   value={exclusaoProdutoId}
                   onChange={(e) => setExclusaoProdutoId(e.target.value ? Number(e.target.value) : "")}
@@ -677,7 +691,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
                   ))}
                 </select>
                 <button type="submit" disabled={!exclusaoProdutoId}>Excluir do grupo</button>
-              </form>
+              </Formulario>
               <ul className="lista-prod">
                 {selecionado.produtos_excluidos.length === 0 ? (
                   <li className="vazio">Nenhuma exclusão.</li>
@@ -688,7 +702,7 @@ export default function AdicionaisPainel({ categorias, setErro, setOk }: Props) 
                     <button
                       type="button"
                       className="btn-ghost"
-                      onClick={() => void removerExclusao(ex.produto_id)}
+                      onClick={async () => void removerExclusao(ex.produto_id)}
                     >
                       Remover exclusão
                     </button>

@@ -64,7 +64,7 @@ export async function rotasCardapio(app: FastifyInstance) {
         caminho_imagem: p.caminho_imagem,
         exige_preparo: p.exige_preparo,
         variantes: p.produto_variantes,
-        preco_desde_centavos: p.produto_variantes[0]?.preco_centavos ?? null,
+        preco_desde_centavos: (p.produto_variantes.length ? Math.min(...p.produto_variantes.map(v => v.preco_centavos)) : null),
       })),
     }));
   });
@@ -154,10 +154,12 @@ export async function rotasCardapio(app: FastifyInstance) {
           descricao: p.descricao,
           caminho_imagem: p.caminho_imagem,
           exige_preparo: p.exige_preparo,
+          esgotado: p.esgotado,
           variantes: p.produto_variantes.map((v) => ({
             id: v.id,
             nome: v.nome,
             preco_centavos: v.preco_centavos,
+            esgotado: v.esgotado,
             grupos_escolhas: v.grupos_escolhas.map((g) => ({
               id: g.id,
               nome: g.nome,
@@ -169,7 +171,7 @@ export async function rotasCardapio(app: FastifyInstance) {
             })),
           })),
           grupos_adicionais: gruposAd,
-          preco_desde_centavos: p.produto_variantes[0]?.preco_centavos ?? null,
+          preco_desde_centavos: (p.produto_variantes.length ? Math.min(...p.produto_variantes.map(v => v.preco_centavos)) : null),
         };
       }),
     }));

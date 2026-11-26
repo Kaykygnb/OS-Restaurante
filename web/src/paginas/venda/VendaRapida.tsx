@@ -1,3 +1,4 @@
+import { useProtecaoEdicao } from "../../hooks/useRascunho";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { lerUsuario, podeOperarCaixa } from "../../auth/sessao";
@@ -73,7 +74,8 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
 
   useEffect(() => salvarRascunho(carrinho, cliente, modo), [carrinho, cliente, modo]);
   const [enviando, setEnviando] = useState(false);
-  const [abertosBalcao, setAbertosBalcao] = useState<{ id: number; codigo_atendimento: string; numero_dia?: number; cliente_nome: string | null; aberto_em: string; total_centavos?: number }[] | null>(null);
+  const [agoraBalcao, setAgoraBalcao] = useState(() => Date.now());
+  const [abertosBalcao, setAbertosBalcao] = useState<{ id: number; codigo_atendimento: string; numero_dia?: number; cliente_nome: string | null; aberto_em: string; total_centavos?: number; totais?: { total_centavos: number }; pedidos?: { status: string }[] }[] | null>(null);
 
   const produtos = useMemo(() => (cardapio ?? []).flatMap((c) => c.produtos), [cardapio]);
   const porVariante = useMemo(() => {
@@ -84,7 +86,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
 
   /** Atalhos 1–9: os mais vendidos (§7); sem a rota, os primeiros do cardápio. */
   const atalhos = useMemo(() => {
-    const doServidor = top.map((t) => ({ produto: porVariante.get(t.produto_variante_id), varianteId: t.produto_variante_id, esgotado: t.esgotado })).filter((x) => x.produto);
+    const doServidor = top.filter(t => t.qtd_vendida > 0).map((t) => ({ produto: porVariante.get(t.produto_variante_id), varianteId: t.produto_variante_id, esgotado: t.esgotado })).filter((x) => x.produto);
     if (doServidor.length) return doServidor.slice(0, 9) as { produto: ProdutoPdv; varianteId: number; esgotado: boolean }[];
     return produtos.slice(0, 9).map((p) => ({ produto: p, varianteId: p.variantes[0].id, esgotado: esgotadoProduto(p) }));
   }, [top, porVariante, produtos]);
@@ -97,15 +99,17 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
   }, [busca, aba, produtos, atalhos, cardapio]);
 
   const t = totais(carrinho, desconto);
+  const produtosCarrinho = new Set(carrinho.map(l => porVariante.get(l.produto_variante_id)?.id ?? l.produto_variante_id)).size;
+  const contagem = `${t.itens} ${t.itens === 1 ? "unidade" : "unidades"} · ${produtosCarrinho} ${produtosCarrinho === 1 ? "produto" : "produtos"}`;
   const qtdPorProduto = useMemo(() => {
     const m = new Map<number, number>();
     for (const l of carrinho) {
-      const p = porVariante.get(l.produto_variante_id);
-      if (p) m.set(p.id, (m.get(p.id) ?? 0) + l.quantidade);
+      m.set(l.produto_variante_id, (m.get(l.produto_variante_id) ?? 0) + l.quantidade);
     }
     return m;
-  }, [carrinho, porVariante]);
+  }, [carrinho]);
   const caixaFechado = !balcao && caixa ? !caixa.aberto : false;
+  useProtecaoEdicao(`venda:${modo}`, carrinho.length > 0 || !!cliente.trim());
   const dialogoAberto = !!(opcoes || pagar || verDesconto || feito || confirmarLimpar || verCarrinho || abertosBalcao);
 
   const tocar = useCallback(
@@ -161,7 +165,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
 
   function abrirAbertos() {
     api("/atendimentos?status=ABERTO&tipo=BALCAO")
-      .then((r: NonNullable<typeof abertosBalcao>) => setAbertosBalcao((Array.isArray(r) ? r : []).filter((a) => (a as { tipo_atendimento?: string }).tipo_atendimento !== "MESA")))
+      .then((r: NonNullable<typeof abertosBalcao>) => { setAgoraBalcao(Date.now()); setAbertosBalcao((Array.isArray(r) ? r : []).filter((a) => (a as { tipo_atendimento?: string }).tipo_atendimento !== "MESA")); })
       .catch((e: ApiErro) => avisar(e.message, "err"));
   }
 
@@ -222,7 +226,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
     <>
       <label className="fld">
         <span className="sr">Cliente (opcional)</span>
-        <input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder={balcao ? "Nome ou senha do cliente (vai no pedido)" : "Cliente (opcional): nome"} maxLength={60} />
+        <input value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder={balcao ? "Nome do cliente ou número de retirada" : "Cliente (opcional): nome"} maxLength={60} />
       </label>
       <div className="venda-linhas" aria-label="Itens da venda">
         {carrinho.length === 0 ? (
@@ -260,7 +264,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
       ) : null}
       <div className="venda-totais">
         <div className="entre muted">
-          <span>Itens ({t.itens})</span>
+          <span>{contagem}</span>
           <span className="num">{formatarReais(t.subtotal)}</span>
         </div>
         {t.desconto ? (
@@ -330,7 +334,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
         </label>
         <div className="pilulas" role="group" aria-label="Categorias">
           <button type="button" aria-pressed={aba === MAIS && !busca} onClick={() => (setAba(MAIS), setBusca(""))}>
-            Mais vendidos
+            {top.some(t => t.qtd_vendida > 0) ? "Mais vendidos" : "Produtos"}
           </button>
           {cardapio.map((c) => (
             <button key={c.id} type="button" aria-pressed={aba === c.id && !busca} onClick={() => (setAba(c.id), setBusca(""))}>
@@ -345,7 +349,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
         ) : (
           <div className="venda-grade">
             {visiveis.map(({ produto: p, varianteId, esgotado }, i) => {
-              const q = qtdPorProduto.get(p.id);
+              const q = qtdPorProduto.get(varianteId);
               const v = p.variantes.find((x) => x.id === varianteId) ?? p.variantes[0];
               const atalho = aba === MAIS && !busca ? i + 1 : null;
               return (
@@ -360,7 +364,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
           </div>
         )}
         <p className="venda-teclas muted pequeno" aria-hidden>
-          <span className="kbd">F1</span> buscar · <span className="kbd">1–9</span> adicionar · <span className="kbd">+</span> <span className="kbd">−</span> quantidade · <span className="kbd">F5–F7</span> forma · <span className="kbd">F9</span> cobrar · <span className="kbd">Esc</span> limpar
+          <span className="kbd">F1</span> buscar · <span className="kbd">1–9</span> adicionar · <span className="kbd">+</span> <span className="kbd">−</span> quantidade · <span className="kbd">F5–F7</span> forma · <span className="kbd">F9</span> {balcao ? "enviar pedido" : "cobrar"} · <span className="kbd">Esc</span> limpar
         </p>
       </section>
 
@@ -376,7 +380,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
 
       <div className="venda-barra-cel">
         <div>
-          <div className="muted pequeno">{t.itens} {t.itens === 1 ? "item" : "itens"}</div>
+          <div className="muted pequeno">{contagem}</div>
           <strong style={{ fontSize: 20 }}>{formatarReais(t.total)}</strong>
         </div>
         <button type="button" className="btn btn-pri btn-g" disabled={!carrinho.length} onClick={() => setVerCarrinho(true)}>
@@ -385,7 +389,7 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
       </div>
 
       {verCarrinho ? (
-        <Dialogo titulo={balcao ? "Pedido balcão" : "Venda rápida"} sub={`${t.itens} itens`} onFechar={() => setVerCarrinho(false)}>
+        <Dialogo titulo={balcao ? "Pedido balcão" : "Venda rápida"} sub={contagem} onFechar={() => setVerCarrinho(false)}>
           <div className="pilha">{blocoCarrinho}</div>
           {carrinho.length ? (
             <button type="button" className="btn btn-perigo" onClick={() => setConfirmarLimpar(true)}>
@@ -495,10 +499,10 @@ export default function VendaRapida({ modo = "venda" }: { modo?: Modo }) {
                 <div key={a.id} className="item-lista" style={{ cursor: "default" }}>
                   <div>
                     <strong>{a.cliente_nome || `Senha ${a.numero_dia ?? a.codigo_atendimento}`}</strong>
-                    <div className="sub">{a.codigo_atendimento}</div>
+                    <div className="sub">{a.codigo_atendimento} · {Math.max(0, Math.floor((agoraBalcao - new Date(a.aberto_em).getTime()) / 60000))} min · {a.pedidos?.some(p => p.status === "EM_PREPARO") ? "Em preparo" : a.pedidos?.some(p => p.status === "RECEBIDO") ? "Aguardando preparo" : "Pronto / sem preparo"}</div>
                   </div>
                   <div className="dir">
-                    {a.total_centavos != null ? <strong>{formatarReais(a.total_centavos)}</strong> : null}
+                    <strong>{formatarReais(a.totais?.total_centavos ?? a.total_centavos ?? 0)}</strong><button type="button" className="btn" onClick={() => navegar(`/painel/pdv/${a.id}`)}>Continuar pedido</button>
                     {podeCaixa ? (
                       <button type="button" className="btn btn-pri" style={{ marginLeft: 8 }} onClick={() => navegar(`/painel/conta/${a.id}`)}>
                         Receber

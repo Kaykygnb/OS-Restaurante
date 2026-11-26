@@ -17,7 +17,7 @@ type AtLista = {
   cliente_telefone: string | null;
   cliente_endereco: string | null;
   taxa_entrega_centavos?: number | null;
-  total_centavos?: number | null;
+  totais?: { total_centavos: number; pago_centavos: number; restante_centavos: number }; total_centavos?: number | null;
   aberto_em: string;
   fechado_em?: string | null;
   _count?: { pedidos: number };
@@ -123,7 +123,7 @@ function Quadro() {
               <h3>
                 {TITULOS[col]} ({colunas[col].length})
               </h3>
-              {colunas[col].length === 0 ? <span className="muted pequeno">Nada aqui.</span> : null}
+              {colunas[col].length === 0 ? <p className="muted pequeno">{col === "cozinha" ? "Nenhum pedido aguardando preparo. Use Novo delivery para começar." : col === "pronto" ? "Os pedidos concluídos pela cozinha aparecerão aqui." : col === "saiu" ? "Nenhuma entrega em percurso." : "As entregas finalizadas aparecerão aqui."}</p> : null}
               {colunas[col].map(({ at, pedidos: ps }) => {
                 const semItens = (at._count?.pedidos ?? 0) === 0;
                 return (
@@ -135,7 +135,7 @@ function Quadro() {
                     {at.cliente_endereco ? <span className="muted pequeno">{at.cliente_endereco}</span> : null}
                     <span className="muted pequeno">
                       {at.taxa_entrega_centavos ? `Entrega ${formatarReais(at.taxa_entrega_centavos)}` : null}
-                      {at.total_centavos ? ` · Total ${formatarReais(at.total_centavos)}` : null}
+                      {` · Total ${formatarReais(at.totais?.total_centavos ?? at.total_centavos ?? 0)} · ${at.totais?.restante_centavos === 0 ? "Pago" : `Pagamento pendente ${formatarReais(at.totais?.restante_centavos ?? at.total_centavos ?? 0)}`}`}
                     </span>
                     <span className="pequeno">{col === "fechado" ? `Fechado às ${new Date(at.fechado_em!).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` : `${minutos(at.aberto_em)} min desde o pedido`}</span>
                     {col === "cozinha" ? (

@@ -1,4 +1,7 @@
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import GuardiaoEdicao from "./componentes/GuardiaoEdicao";
+import AbaMesas from "./paginas/configuracoes/AbaMesas";
+import FilaImpressao from "./paginas/FilaImpressao";
+import { createBrowserRouter, createRoutesFromElements, Navigate, Route, RouterProvider } from "react-router-dom";
 import { estaLogado, lerUsuario, sair, telaInicial } from "./auth/sessao";
 import AppLayout from "./componentes/layout/AppLayout";
 import ConectarCelulares from "./paginas/conectar/ConectarCelulares";
@@ -31,11 +34,10 @@ registrarAoExpirarSessao(() => {
   if (!location.pathname.startsWith("/login")) location.assign("/login?expirou=1");
 });
 
-export default function App() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={estaLogado() ? <Navigate to={telaInicial(lerUsuario()?.tipo)} replace /> : <Entrar />} />
+function RotaLogin() { return estaLogado() ? <Navigate to={telaInicial(lerUsuario()?.tipo)} replace /> : <Entrar />; }
+const router = createBrowserRouter(createRoutesFromElements(
+      <Route element={<GuardiaoEdicao />}>
+        <Route path="/login" element={<RotaLogin />} />
 
         <Route element={<RotaProtegida />}>
           <Route
@@ -49,6 +51,8 @@ export default function App() {
             <Route index element={<Inicio />} />
             <Route path="venda" element={<RequerCaixa><VendaRapida /></RequerCaixa>} />
             <Route path="balcao" element={<VendaRapida key="balcao" modo="balcao" />} />
+            <Route path="cadastro-mesas" element={<AbaMesas />} />
+            <Route path="impressao" element={<FilaImpressao />} />
             <Route path="mesas" element={<MapaMesas />} />
             <Route path="pdv/:atendimentoId" element={<Pdv />} />
             <Route path="conta/:atendimentoId" element={<RequerCaixa><Conta /></RequerCaixa>} />
@@ -63,6 +67,7 @@ export default function App() {
             <Route path="relatorios" element={<Relatorios />} />
             <Route path="auditoria" element={<Auditoria />} />
             <Route path="usuarios" element={<Usuarios />} />
+            <Route path="configuracoes/entrega" element={<Navigate to="/painel/configuracoes?aba=entrega" replace />} />
             <Route path="configuracoes" element={<Configuracoes />} />
             <Route path="conectar" element={<ConectarCelulares />} />
             <Route path="aparelho" element={<Aparelho />} />
@@ -70,7 +75,6 @@ export default function App() {
         </Route>
 
         <Route path="*" element={<Navigate to={estaLogado() ? "/painel" : "/login"} replace />} />
-      </Routes>
-    </BrowserRouter>
-  );
-}
+      </Route>
+));
+export default function App() { return <RouterProvider router={router} />; }

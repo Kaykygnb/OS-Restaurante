@@ -41,7 +41,7 @@ export default function FecharCaixa({ sessaoId, gestor, onFechar, onFechado }: {
   }, []);
 
   const contado = (id: number) => reaisParaCentavos(valores[id] || "0");
-  const faltaAlgum = previa?.formas.some((f) => valores[f.forma_pagamento_id] === undefined || valores[f.forma_pagamento_id] === "");
+  const faltaAlgum = previa?.formas.some((f) => !valores[f.forma_pagamento_id]?.trim() || !/^\d+(?:[.,]\d{1,2})?$/.test(valores[f.forma_pagamento_id].trim()) || contado(f.forma_pagamento_id) < 0);
 
   async function enviar(extra: { aprovacao?: boolean } = {}) {
     if (!previa) return;
@@ -155,12 +155,13 @@ export default function FecharCaixa({ sessaoId, gestor, onFechar, onFechado }: {
           <button type="button" className="btn" onClick={onFechar}>
             Cancelar
           </button>
-          <button type="button" className="btn btn-pri" disabled={enviando || !previa} onClick={() => enviar({ aprovacao: etapa === "aprovar" })}>
-            {enviando ? "Fechando…" : etapa === "aprovar" ? "Aprovar e fechar" : etapa === "contas" ? "Fechar mesmo assim" : "Confirmar e imprimir"}
+          <button type="button" className="btn btn-pri" disabled={enviando || !previa || faltaAlgum || (etapa === "aprovar" && (!aprov || pin.length < 4)) || ((etapa === "contas" || etapa === "aprovar") && !motivo.trim())} onClick={() => enviar({ aprovacao: etapa === "aprovar" })}>
+            {enviando ? "Fechando…" : etapa === "aprovar" ? "Aprovar e fechar" : etapa === "contas" ? "Fechar mesmo assim" : "Fechar caixa e imprimir relatório"}
           </button>
         </>
       }
     >
+      {gestor && previa && !faltaAlgum && previa.formas.some(f => contado(f.forma_pagamento_id) !== f.esperado_centavos) ? <Faixa tom="warn" titulo="Confira as divergências antes de fechar">{previa.formas.filter(f => contado(f.forma_pagamento_id) !== f.esperado_centavos).map(f => `${f.nome}: ${sinal(contado(f.forma_pagamento_id) - (f.esperado_centavos ?? 0))}`).join(" · ")}. Faltas exigem motivo e aprovação por PIN.</Faixa> : null}
       {erroCarga ? <Faixa tom="err">{erroCarga}</Faixa> : null}
       {!previa && !erroCarga ? <Carregando linhas={4} /> : null}
       {previa ? (
@@ -186,7 +187,7 @@ export default function FecharCaixa({ sessaoId, gestor, onFechar, onFechado }: {
                   id={`cont-${f.forma_pagamento_id}`}
                   className="entrada"
                   inputMode="decimal"
-                  placeholder="R$ 0,00"
+                  placeholder="Informe o contado"
                   disabled={etapa !== "contar"}
                   value={valores[f.forma_pagamento_id] ?? ""}
                   onChange={(e) => setValores((v) => ({ ...v, [f.forma_pagamento_id]: e.target.value }))}

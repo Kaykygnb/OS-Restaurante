@@ -52,6 +52,7 @@ function periodo(p: Periodo) {
 
 /** Pranchas 19a–19e: somente leitura. Linha do tempo com detalhe, alertas e resumo por funcionário. */
 export default function Auditoria() {
+  const [per, setPer] = useState<Periodo>("hoje");
   const [aba, setAba] = useState<Aba>("tempo");
   const [verif, setVerif] = useState<{ ok: boolean; conferencia?: string | null; primeiro_id_quebrado?: number } | null>(null);
   const { avisar } = useSistema();
@@ -91,16 +92,16 @@ export default function Auditoria() {
           {verif.ok ? `Código de conferência: ${verif.conferencia ?? "—"}. Anote para comparar depois.` : "Algum registro foi mexido fora do sistema. Avise o suporte."}
         </Faixa>
       ) : null}
-      {aba === "tempo" ? <LinhaDoTempo dono={dono} /> : aba === "alertas" ? <Alertas /> : <PorFuncionario />}
+      {aba === "tempo" ? <LinhaDoTempo dono={dono} per={per} setPer={setPer} /> : aba === "alertas" ? <Alertas per={per} /> : <PorFuncionario per={per} setPer={setPer} />}
     </div>
   );
 }
 
-function LinhaDoTempo({ dono }: { dono: boolean }) {
+type ControlePeriodo = { per: Periodo; setPer: (p: Periodo) => void };
+function LinhaDoTempo({ dono, per, setPer }: { dono: boolean } & ControlePeriodo) {
   const { avisar } = useSistema();
   const [pessoas, setPessoas] = useState<{ id: number; nome: string }[]>([]);
   const [pessoa, setPessoa] = useState("");
-  const [per, setPer] = useState<Periodo>("hoje");
   const [grupo, setGrupo] = useState("");
   const [soSens, setSoSens] = useState(false);
   const [lista, setLista] = useState<Evento[] | null>(null);
@@ -134,6 +135,21 @@ function LinhaDoTempo({ dono }: { dono: boolean }) {
   // O servidor filtra um tipo por vez; o grupo (ex.: "Cancelamentos") é filtrado aqui.
   const tipos = GRUPOS_EVENTO.find((g) => g.rotulo === grupo)?.tipos;
   const mostrados = (lista ?? []).filter((e) => !tipos || tipos.includes(e.tipo));
+
+  async function imprimir() {
+    const janela = window.open("", "_blank");
+    if (!janela) return avisar("Permita abrir a página de impressão no navegador.", "err");
+    janela.opener = null;
+    janela.document.title = "Preparando auditoria";
+    janela.document.body.textContent = "Preparando relatório…";
+    try {
+      const q = new URLSearchParams(query); q.delete("pagina"); q.delete("limite");
+      const r = await fetch(`/api/auditoria/imprimir?${q}`, { headers: { Authorization: `Bearer ${localStorage.getItem("token") ?? ""}` } });
+      if (!r.ok) throw new Error("Não foi possível preparar a impressão.");
+      const html = await r.text();
+      janela.document.open(); janela.document.write(html); janela.document.close();
+    } catch (e) { janela.close(); avisar((e as Error).message, "err"); }
+  }
 
   async function exportar() {
     try {
@@ -204,6 +220,7 @@ function LinhaDoTempo({ dono }: { dono: boolean }) {
             <button type="button" className="btn" onClick={exportar}>
               Exportar planilha
             </button>
+            <button type="button" className="btn" onClick={() => void imprimir()}>Imprimir auditoria</button>
           </div>
         ) : null}
       </div>
@@ -230,7 +247,7 @@ function LinhaDoTempo({ dono }: { dono: boolean }) {
                 </strong>
                 <br />
                 <span className="sub">
-                  {[e.alvo_rotulo, e.valor_antes && e.valor_depois ? `${textoValor(e.valor_antes)} → ${textoValor(e.valor_depois)}` : e.valor_centavos ? formatarReais(e.valor_centavos) : null, e.motivo].filter(Boolean).join(" · ") || "—"}
+                  {[e.alvo_rotulo ?? (e.atendimento_id ? `Atendimento #${e.atendimento_id}` : null), e.valor_antes && e.valor_depois ? `${textoValor(e.valor_antes)} → ${textoValor(e.valor_depois)}` : e.valor_centavos ? formatarReais(e.valor_centavos) : null, e.motivo].filter(Boolean).join(" · ") || "—"}
                 </span>
               </span>
               {e.aprovador_nome ? <span className="tag so-pc">aprovado: {e.aprovador_nome}{e.aprovado_com_pin ? " (PIN)" : ""}</span> : null}
@@ -291,19 +308,19 @@ function Detalhe({ e, onFechar }: { e: Evento; onFechar: () => void }) {
   );
 }
 
-function Alertas() {
+function Alertas({ per }: { per: Periodo }) {
   const { avisar } = useSistema();
   const [lista, setLista] = useState<Evento[] | null>(null);
   const [erro, setErro] = useState("");
   const [todos, setTodos] = useState(false);
   const carregar = useCallback(() => {
-    (api(`/auditoria/alertas?visto=${todos ? "true" : "false"}`) as Promise<Evento[]>)
+    (api(`/auditoria/alertas?visto=${todos ? "true" : "false"}&de=${encodeURIComponent(periodo(per).de)}`) as Promise<Evento[]>)
       .then((l) => {
         setErro("");
         setLista(l);
       })
       .catch((e: ApiErro) => setErro(e.message));
-  }, [todos]);
+  }, [todos, per]);
   useEffect(carregar, [carregar]);
 
   async function visto(e: Evento) {
@@ -353,8 +370,7 @@ function Alertas() {
   );
 }
 
-function PorFuncionario() {
-  const [per, setPer] = useState<Periodo>("7");
+function PorFuncionario({ per, setPer }: ControlePeriodo) {
   const [lista, setLista] = useState<Resumo[] | null>(null);
   const [erro, setErro] = useState("");
   const carregar = useCallback(() => {

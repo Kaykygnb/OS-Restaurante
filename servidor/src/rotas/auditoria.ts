@@ -31,7 +31,7 @@ export async function rotasAuditoria(app: FastifyInstance) {
     const visto = String((req.query as any)?.visto ?? "false");
     const usuarioId = Number((req.user as any).id);
     const eventos = await prisma.evento_auditoria.findMany({
-      where: { OR: [{ sensivel: true }, { destaque: true }] },
+      where: { ...filtros(req.query), OR: [{ sensivel: true }, { destaque: true }] },
       orderBy: { id: "desc" },
       take: 100,
     });
@@ -135,10 +135,11 @@ export async function rotasAuditoria(app: FastifyInstance) {
 
   app.get("/auditoria/imprimir", authGestao, async (req, reply) => {
     const eventos = await prisma.evento_auditoria.findMany({ where: filtros(req.query), orderBy: { id: "desc" }, take: 500 });
+    const escapar = (valor: unknown) => String(valor ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
     const linhas = eventos
       .map(
         (e) =>
-          `<tr><td>${e.id}</td><td>${e.criado_em.toISOString()}</td><td>${e.tipo}</td><td>${e.usuario_nome}</td><td>${e.motivo ?? ""}</td><td>${e.hash.slice(0, 8)}</td></tr>`
+          `<tr><td>${e.id}</td><td>${e.criado_em.toISOString()}</td><td>${escapar(e.tipo)}</td><td>${escapar(e.usuario_nome)}</td><td>${escapar(e.motivo)}</td><td>${e.hash.slice(0, 8)}</td></tr>`
       )
       .join("");
     reply.type("text/html");

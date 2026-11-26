@@ -1,3 +1,5 @@
+import { lerRascunhoSeguro, podeTrocarEdicao, useEdicaoPendente } from "../../hooks/useRascunho";
+import { confirmar } from "../../servicos/dialogos";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Dialogo from "../../componentes/ui/Dialogo";
 import { Carregando, ErroCarga, Faixa, Vazio } from "../../componentes/ui/Estados";
@@ -5,7 +7,7 @@ import Icone from "../../componentes/ui/Icone";
 import { useSistema } from "../../estado/sistema-ctx";
 import { api, type ApiErro } from "../../servicos/api";
 import { formatarReais, reaisParaCentavos } from "../../util/dinheiro";
-import { DIAS, horaParaMin, precoComPromo, textoQuando, textoRegra, type PromoRegra, type TipoPromo } from "../../util/promocoes";
+import { DIAS, minParaHora, horaParaMin, precoComPromo, textoQuando, textoRegra, type PromoRegra, type TipoPromo } from "../../util/promocoes";
 
 type Promo = PromoRegra & {
   id: number;
@@ -14,6 +16,10 @@ type Promo = PromoRegra & {
   usos: number;
   ativo: boolean;
   inclui_extras: boolean;
+  prioridade: number;
+  acumulavel: boolean;
+  limite_total: number | null;
+  limite_por_atendimento: number | null;
   alvos: { produto_id: number | null; produto_variante_id: number | null; categoria_id: number | null }[];
 };
 type Cat = { id: number; nome: string; produtos: { id: number; nome: string; variantes: { id: number; nome: string; preco_centavos: number }[] }[] };
@@ -27,6 +33,7 @@ export default function Promocoes() {
   const [cats, setCats] = useState<Cat[]>([]);
   const [erro, setErro] = useState("");
   const [aba, setAba] = useState<"ativas" | "encerradas">("ativas");
+  const [editando, setEditando] = useState<Promo | null>(null);
   const [nova, setNova] = useState(false);
 
   const carregar = useCallback(() => {
@@ -55,7 +62,7 @@ export default function Promocoes() {
   );
 
   async function encerrar(p: Promo) {
-    if (!confirm(`Encerrar "${p.nome}" agora? Ela para de valer na hora.`)) return;
+    if (!(await confirmar(`Encerrar "${p.nome}" agora? Ela para de valer na hora.`))) return;
     try {
       await api(`/promocoes/${p.id}`, { method: "PATCH", body: JSON.stringify({ encerrar: true }) });
       avisar("Promoção encerrada.", "ok");
@@ -71,14 +78,14 @@ export default function Promocoes() {
     <div className="pilha" style={{ gap: 14 }}>
       <div className="cab-pagina">
         <div className="segmento" role="group" aria-label="Filtrar">
-          <button type="button" aria-pressed={aba === "ativas"} onClick={() => setAba("ativas")}>
+          <button type="button" aria-pressed={aba === "ativas"} onClick={async () => setAba("ativas")}>
             Ativas
           </button>
-          <button type="button" aria-pressed={aba === "encerradas"} onClick={() => setAba("encerradas")}>
+          <button type="button" aria-pressed={aba === "encerradas"} onClick={async () => setAba("encerradas")}>
             Encerradas
           </button>
         </div>
-        <button type="button" className="btn btn-pri" style={{ marginLeft: "auto" }} onClick={() => setNova(true)}>
+        <button type="button" className="btn btn-pri" style={{ marginLeft: "auto" }} onClick={async () => setNova(true)}>
           <Icone nome="mais" /> Nova promoção
         </button>
       </div>
@@ -102,8 +109,9 @@ export default function Promocoes() {
                 <div className="muted pequeno">{textoQuando(p)}</div>
               </div>
               <span className="muted pequeno">{p.usos} usos</span>
+              <button type="button" className="btn" onClick={async () => setEditando(p)}>Editar promoção</button>
               {!encerrada(p) ? (
-                <button type="button" className="btn" onClick={() => encerrar(p)}>
+                <button type="button" className="btn" onClick={async () => encerrar(p)}>
                   Encerrar agora
                 </button>
               ) : null}
@@ -119,13 +127,15 @@ export default function Promocoes() {
           <li>Depois da data final, a promoção para sozinha.</li>
         </ul>
       </section>
-      {nova ? (
+      {nova || editando ? (
         <NovaPromocao
+          key={editando?.id ?? "nova"}
+          inicial={editando ?? undefined}
           cats={cats}
-          onFechar={() => setNova(false)}
+          onFechar={() => { setNova(false); setEditando(null); }}
           onCriada={() => {
-            setNova(false);
-            avisar("Promoção criada.", "ok");
+            setNova(false); setEditando(null);
+            avisar("Promoção salva.", "ok");
             carregar();
           }}
         />
@@ -142,24 +152,32 @@ const TIPOS_AT = [
   { chave: "VENDA_RAPIDA", rotulo: "Venda rápida" },
 ];
 
-function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () => void; onCriada: () => void }) {
-  const [nome, setNome] = useState("");
-  const [tipo, setTipo] = useState<TipoPromo>("PERCENTUAL");
-  const [valor, setValor] = useState("");
-  const [leve, setLeve] = useState("3");
-  const [pague, setPague] = useState("2");
-  const [valeEm, setValeEm] = useState<"tudo" | "categoria" | "produto">("categoria");
-  const [alvo, setAlvo] = useState<string>("");
-  const [dias, setDias] = useState(127);
-  const [das, setDas] = useState("");
-  const [ate, setAte] = useState("");
-  const [ini, setIni] = useState("");
-  const [fim, setFim] = useState("");
-  const [extras, setExtras] = useState(false);
-  const [tipos, setTipos] = useState<string[]>(TIPOS_AT.map((t) => t.chave));
+function NovaPromocao({ cats, onFechar, onCriada, inicial }: { cats: Cat[]; inicial?: Promo; onFechar: () => void; onCriada: () => void }) {
+  const [rascunho] = useState(() => lerRascunhoSeguro<{ nome:string; tipo:TipoPromo; valor:string; leve:string; pague:string; valeEm:"tudo"|"categoria"|"produto"; alvo:string; dias:number; das:string; ate:string; ini:string; fim:string; extras:boolean; tipos:string[]; prioridade:string; limiteTotal:string; limiteConta:string; acumulavel:boolean; ativo:boolean }>(`promocao:${inicial?.id ?? "nova"}`));
+  const [nome, setNome] = useState(rascunho?.nome ?? (inicial?.nome ?? ""));
+  const [tipo, setTipo] = useState<TipoPromo>(rascunho?.tipo ?? ((inicial?.tipo as TipoPromo) ?? "PERCENTUAL"));
+  const [valor, setValor] = useState(rascunho?.valor ?? (inicial ? inicial.tipo === "PERCENTUAL" ? String(inicial.percentual ?? 0) : ((inicial.valor_centavos ?? inicial.preco_fixo_centavos ?? 0) / 100).toFixed(2) : ""));
+  const [leve, setLeve] = useState(rascunho?.leve ?? (String(inicial?.leve ?? 3)));
+  const [pague, setPague] = useState(rascunho?.pague ?? (String(inicial?.pague ?? 2)));
+  const [valeEm, setValeEm] = useState<"tudo" | "categoria" | "produto">(rascunho?.valeEm ?? (inicial ? inicial.alvos[0]?.categoria_id ? "categoria" : inicial.alvos[0]?.produto_id ? "produto" : "tudo" : "categoria"));
+  const [alvo, setAlvo] = useState<string>(rascunho?.alvo ?? (String(inicial?.alvos[0]?.categoria_id ?? inicial?.alvos[0]?.produto_id ?? "")));
+  const [dias, setDias] = useState(rascunho?.dias ?? (inicial?.dias_semana ?? 127));
+  const [das, setDas] = useState(rascunho?.das ?? (inicial?.hora_inicio_min != null ? minParaHora(inicial.hora_inicio_min) : ""));
+  const [ate, setAte] = useState(rascunho?.ate ?? (inicial?.hora_fim_min != null ? minParaHora(inicial.hora_fim_min) : ""));
+  const [ini, setIni] = useState(rascunho?.ini ?? (inicial?.inicio_em ? new Date(new Date(inicial.inicio_em).getTime() - 10800000).toISOString().slice(0, 10) : ""));
+  const [fim, setFim] = useState(rascunho?.fim ?? (inicial?.fim_em ? new Date(new Date(inicial.fim_em).getTime() - 10800000).toISOString().slice(0, 10) : ""));
+  const [extras, setExtras] = useState(rascunho?.extras ?? (inicial?.inclui_extras ?? false));
+  const [tipos, setTipos] = useState<string[]>(rascunho?.tipos ?? (inicial ? TIPOS_AT.filter(t => t.chave.split(",").some(x => inicial.tipos_atendimento.split(",").includes(x))).map(t => t.chave) : TIPOS_AT.map(t => t.chave)));
+  const [prioridade, setPrioridade] = useState(rascunho?.prioridade ?? (String(inicial?.prioridade ?? 0)));
+  const [limiteTotal, setLimiteTotal] = useState(rascunho?.limiteTotal ?? (String(inicial?.limite_total ?? "")));
+  const [limiteConta, setLimiteConta] = useState(rascunho?.limiteConta ?? (String(inicial?.limite_por_atendimento ?? "")));
+  const [acumulavel, setAcumulavel] = useState(rascunho?.acumulavel ?? (inicial?.acumulavel ?? false));
+  const [ativo, setAtivo] = useState(rascunho?.ativo ?? (inicial?.ativo ?? true));
   const [msg, setMsg] = useState("");
   const [enviando, setEnviando] = useState(false);
 
+  const marcarSalvo = useEdicaoPendente(`promocao:${inicial?.id ?? "nova"}`, { nome, tipo, valor, leve, pague, valeEm, alvo, dias, das, ate, ini, fim, extras, tipos, prioridade, limiteTotal, limiteConta, acumulavel, ativo });
+  const fechar = async () => { if (await podeTrocarEdicao()) onFechar(); };
   const produtos = useMemo(() => cats.flatMap((c) => c.produtos), [cats]);
   const exemplo = useMemo(() => {
     if (valeEm === "categoria") return cats.find((c) => String(c.id) === alvo)?.produtos[0];
@@ -192,13 +210,17 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
     if (!dias) return setMsg("Escolha pelo menos um dia.");
     if (!tipos.length) return setMsg("Escolha onde a promoção vale.");
     if (ini && fim && fim < ini) return setMsg("A data final é antes da inicial.");
+    if (!Number.isInteger(Number(prioridade)) || [limiteTotal, limiteConta].some(v => v !== "" && (!Number.isSafeInteger(Number(v)) || Number(v) < 1))) return setMsg("Prioridade deve ser inteira e limites devem ser inteiros positivos.");
     setEnviando(true);
     setMsg("");
     try {
-      await api("/promocoes", {
-        method: "POST",
+      await api(inicial ? `/promocoes/${inicial.id}` : "/promocoes", {
+        method: inicial ? "PATCH" : "POST",
         body: JSON.stringify({
           nome: nome.trim(),
+          prioridade: Number(prioridade), acumulavel, ativo,
+          limite_total: limiteTotal ? Number(limiteTotal) : null,
+          limite_por_atendimento: limiteConta ? Number(limiteConta) : null,
           ...regra,
           dias_semana: dias,
           hora_inicio_min: horaIni,
@@ -210,7 +232,7 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
           alvos: valeEm === "tudo" ? [] : valeEm === "categoria" ? [{ categoria_id: Number(alvo) }] : [{ produto_id: Number(alvo) }],
         }),
       });
-      onCriada();
+      marcarSalvo(); onCriada();
     } catch (e) {
       setMsg((e as ApiErro).message);
     } finally {
@@ -220,14 +242,14 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
 
   return (
     <Dialogo
-      titulo="Nova promoção"
+      titulo={inicial ? "Editar promoção" : "Nova promoção"}
       sub="Preencha de cima para baixo; a prévia mostra como fica"
       largo
-      onFechar={onFechar}
+      onFechar={() => void fechar()}
       fecharComEsc={!enviando}
       pe={
         <>
-          <button type="button" className="btn" onClick={onFechar}>
+          <button type="button" className="btn" onClick={() => void fechar()}>
             Cancelar
           </button>
           <button type="button" className="btn btn-pri" disabled={enviando} onClick={salvar}>
@@ -238,6 +260,7 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
     >
       <div className="pilha" style={{ gap: 12 }}>
         {msg ? <Faixa tom="err" titulo={msg} /> : null}
+        <Faixa tom="ok" titulo="Prévia">{previa}</Faixa>
         <div className="linha-campos">
           <label className="fld">
             <span>Nome</span>
@@ -247,7 +270,7 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
             <span>Tipo</span>
             <div className="segmento" role="group" aria-label="Tipo">
               {(Object.keys(ROTULO_TIPO) as TipoPromo[]).map((t) => (
-                <button key={t} type="button" aria-pressed={tipo === t} onClick={() => setTipo(t)}>
+                <button key={t} type="button" disabled={!!inicial} aria-pressed={tipo === t} onClick={async () => setTipo(t)}>
                   {ROTULO_TIPO[t]}
                 </button>
               ))}
@@ -273,8 +296,9 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
             </label>
           )}
           <label className="fld">
-            <span>Vale em</span>
+            <span>Produtos participantes</span>
             <select
+              disabled={!!inicial}
               value={valeEm}
               onChange={(e) => {
                 setValeEm(e.target.value as typeof valeEm);
@@ -288,8 +312,8 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
           </label>
           {valeEm !== "tudo" ? (
             <label className="fld">
-              <span>Qual</span>
-              <select value={alvo} onChange={(e) => setAlvo(e.target.value)}>
+              <span>{valeEm === "categoria" ? "Categoria participante" : "Produto participante"}</span>
+              <select disabled={!!inicial} value={alvo} onChange={(e) => setAlvo(e.target.value)}>
                 <option value="">Escolha…</option>
                 {valeEm === "categoria"
                   ? cats.map((c) => (
@@ -310,7 +334,7 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
           <span>Dias</span>
           <div className="pilulas" role="group" aria-label="Dias da semana">
             {DIAS.map((d) => (
-              <button key={d.bit} type="button" aria-pressed={!!(dias & d.bit)} onClick={() => setDias(dias ^ d.bit)}>
+              <button key={d.bit} type="button" aria-pressed={!!(dias & d.bit)} onClick={async () => setDias(dias ^ d.bit)}>
                 {d.curto}
               </button>
             ))}
@@ -336,7 +360,7 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
           </label>
         </div>
         <div className="fld">
-          <span>Onde vale</span>
+          <span>Canais de atendimento</span>
           <div className="linha" style={{ flexWrap: "wrap" }}>
             {TIPOS_AT.map((t) => (
               <label key={t.chave} className="check">
@@ -348,9 +372,15 @@ function NovaPromocao({ cats, onFechar, onCriada }: { cats: Cat[]; onFechar: () 
         <label className="check">
           <input type="checkbox" checked={extras} onChange={(e) => setExtras(e.target.checked)} /> O desconto vale também sobre os adicionais
         </label>
-        <Faixa tom="ok" titulo="Prévia">
-          {previa}
-        </Faixa>
+        <details><summary>Opções avançadas: prioridade e limites</summary><p className="dica">A maior prioridade é aplicada primeiro. Promoções não acumuláveis concorrem entre si; marque acumulação apenas quando os descontos puderem ser combinados.</p>
+        <div className="linha-campos">
+          <label className="fld"><span>Prioridade</span><input type="number" value={prioridade} onChange={e => setPrioridade(e.target.value)} /></label>
+          <label className="fld"><span>Limite total de usos (opcional)</span><input type="number" min="1" value={limiteTotal} onChange={e => setLimiteTotal(e.target.value)} /></label>
+          <label className="fld"><span>Limite por atendimento (opcional)</span><input type="number" min="1" value={limiteConta} onChange={e => setLimiteConta(e.target.value)} /></label>
+        </div>
+        <label className="check"><input type="checkbox" checked={acumulavel} onChange={e => setAcumulavel(e.target.checked)} /> Acumulável com outras promoções</label></details>
+        {inicial ? <label className="check"><input type="checkbox" checked={ativo} onChange={e => setAtivo(e.target.checked)} /> Promoção ativa (a validade também precisa estar vigente)</label> : null}
+
       </div>
     </Dialogo>
   );

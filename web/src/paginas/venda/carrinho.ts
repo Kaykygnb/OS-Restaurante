@@ -1,3 +1,4 @@
+import { lerUsuario } from "../../auth/sessao";
 /** Regras puras do carrinho da venda rápida e do pagamento. Testadas no Vitest. */
 import type { PedidoItemInput } from "../../servicos/contratos";
 import { linhaCentavos, type CarrinhoLinha } from "../pdv-regras";
@@ -86,19 +87,19 @@ export function resumoLinha(l: CarrinhoLinha): string {
 }
 
 // ——— Rascunho (Esc volta sem perder o carrinho) ———
-const CHAVE_RASCUNHO = "venda_rapida_rascunho";
+const chaveRascunho = (modo: string) => `osr:rascunho:${lerUsuario()?.id ?? "anonimo"}:venda-${modo}`;
 export function salvarRascunho(c: CarrinhoLinha[], cliente: string, modo = "venda") {
-  const CHAVE = `${CHAVE_RASCUNHO}_${modo}`;
+  const CHAVE = chaveRascunho(modo);
   try {
-    if (!c.length && !cliente) localStorage.removeItem(CHAVE);
-    else localStorage.setItem(CHAVE, JSON.stringify({ c, cliente }));
+    if (!c.length && !cliente) sessionStorage.removeItem(CHAVE);
+    else sessionStorage.setItem(CHAVE, JSON.stringify({ c, cliente }));
   } catch {
     /* sem espaço: segue sem rascunho */
   }
 }
 export function lerRascunho(modo = "venda"): { c: CarrinhoLinha[]; cliente: string } {
   try {
-    const r = JSON.parse(localStorage.getItem(`${CHAVE_RASCUNHO}_${modo}`) || "null");
+    const r = JSON.parse(sessionStorage.getItem(chaveRascunho(modo)) || "null");
     if (r && Array.isArray(r.c)) return { c: r.c, cliente: String(r.cliente ?? "") };
   } catch {
     /* rascunho estragado: ignora */

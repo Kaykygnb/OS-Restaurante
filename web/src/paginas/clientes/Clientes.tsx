@@ -1,3 +1,5 @@
+import { lerRascunhoSeguro, podeTrocarEdicao, useEdicaoPendente } from "../../hooks/useRascunho";
+import { confirmar } from "../../servicos/dialogos";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { lerUsuario } from "../../auth/sessao";
@@ -49,7 +51,7 @@ export default function Clientes() {
           <span className="sr">Buscar cliente</span>
           <input type="search" placeholder="Buscar por nome ou telefone" value={busca} onChange={(e) => setBusca(e.target.value)} />
         </label>
-        <button type="button" className="btn btn-pri" onClick={() => setNovo(true)}>
+        <button type="button" className="btn btn-pri" onClick={async () => setNovo(true)}>
           <Icone nome="mais" /> Novo cliente
         </button>
       </div>
@@ -59,7 +61,7 @@ export default function Clientes() {
       ) : !lista ? (
         <Carregando />
       ) : lista.length === 0 ? (
-        <Vazio icone="clientes" titulo={busca ? "Nenhum cliente encontrado" : "Nenhum cliente ainda"} acao={<button type="button" className="btn btn-pri" onClick={() => setNovo(true)}>Cadastrar cliente</button>}>
+        <Vazio icone="clientes" titulo={busca ? "Nenhum cliente encontrado" : "Nenhum cliente ainda"} acao={<button type="button" className="btn btn-pri" onClick={async () => setNovo(true)}>Cadastrar cliente</button>}>
           {busca ? "Confira o nome ou o número, ou cadastre um novo." : "Os clientes aparecem aqui quando você cadastra ou faz um delivery."}
         </Vazio>
       ) : (
@@ -75,9 +77,9 @@ export default function Clientes() {
             </thead>
             <tbody>
               {lista.map((c) => (
-                <tr key={c.id} className="clicavel" onClick={() => abrirFicha(c.id)}>
+                <tr key={c.id} className="clicavel" onClick={async () => abrirFicha(c.id)}>
                   <td>
-                    <button type="button" className="btn-link" onClick={() => abrirFicha(c.id)}>
+                    <button type="button" className="btn-link" onClick={async () => abrirFicha(c.id)}>
                       {c.nome}
                     </button>
                   </td>
@@ -90,7 +92,7 @@ export default function Clientes() {
           </table>
           <div className="lista so-celular">
             {lista.map((c) => (
-              <button key={c.id} type="button" className="item-lista" onClick={() => abrirFicha(c.id)}>
+              <button key={c.id} type="button" className="item-lista" onClick={async () => abrirFicha(c.id)}>
                 <span className="avatar">{inicial(c.nome)}</span>
                 <span style={{ flex: 1, textAlign: "left" }}>
                   <strong>{c.nome}</strong>
@@ -128,25 +130,30 @@ export default function Clientes() {
 
 export function NovoCliente({
   telefoneInicial = "",
+  enderecoInicial = false,
   onFechar,
   onCriado,
   onAbrirExistente,
 }: {
   telefoneInicial?: string;
+  enderecoInicial?: boolean;
   onFechar: () => void;
   onCriado: (c: Cliente) => void;
   onAbrirExistente: (id: number) => void;
 }) {
-  const [nome, setNome] = useState("");
-  const [tel, setTel] = useState(telefoneInicial);
-  const [obs, setObs] = useState("");
-  const [comEndereco, setComEndereco] = useState(true);
-  const [end, setEnd] = useState<EnderecoInput>(ENDERECO_VAZIO);
+  const r = lerRascunhoSeguro<{ nome: string; tel: string; obs: string; comEndereco: boolean; end: EnderecoInput }>("cliente:novo");
+  const [nome, setNome] = useState(r?.nome ?? "");
+  const [tel, setTel] = useState(r?.tel ?? telefoneInicial);
+  const [obs, setObs] = useState(r?.obs ?? "");
+  const [comEndereco, setComEndereco] = useState(r?.comEndereco ?? enderecoInicial);
+  const [end, setEnd] = useState<EnderecoInput>(r?.end ?? ENDERECO_VAZIO);
   const [erros, setErros] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState("");
   const [repetido, setRepetido] = useState<number | null>(null);
   const [enviando, setEnviando] = useState(false);
 
+  const marcarSalvo = useEdicaoPendente("cliente:novo", { nome, tel, obs, comEndereco, end });
+  const fechar = async () => { if (await podeTrocarEdicao()) onFechar(); };
   async function salvar() {
     const e: Record<string, string> = {};
     if (!nome.trim()) e.nome = "Informe o nome";
@@ -159,7 +166,7 @@ export function NovoCliente({
     setRepetido(null);
     try {
       const c = await criarCliente({ nome: nome.trim(), telefone: soDigitos(tel), observacao: obs.trim() || undefined, endereco: comEndereco ? limparEndereco(end) : undefined });
-      onCriado(c);
+      marcarSalvo(); onCriado(c);
     } catch (x) {
       const err = x as ApiErro;
       if (err.codigo === "telefone_em_uso") {
@@ -175,11 +182,11 @@ export function NovoCliente({
     <Dialogo
       titulo="Novo cliente"
       largo
-      onFechar={onFechar}
+      onFechar={() => void fechar()}
       fecharComEsc={!enviando}
       pe={
         <>
-          <button type="button" className="btn" onClick={onFechar}>
+          <button type="button" className="btn" onClick={() => void fechar()}>
             Cancelar
           </button>
           <button type="button" className="btn btn-pri" disabled={enviando} onClick={salvar}>
@@ -195,7 +202,7 @@ export function NovoCliente({
             titulo={msg}
             acao={
               repetido ? (
-                <button type="button" className="btn" onClick={() => onAbrirExistente(repetido)}>
+                <button type="button" className="btn" onClick={async () => onAbrirExistente(repetido)}>
                   Abrir a ficha desse cliente
                 </button>
               ) : undefined
@@ -294,15 +301,15 @@ function Ficha({ id, onFechar, onMudou }: { id: number; onFechar: () => void; on
               type="button"
               className="btn btn-perigo"
               disabled={ocupado}
-              onClick={() => {
-                if (confirm(`Desativar ${c.nome}? Ele some da busca, mas o histórico fica guardado.`)) void acao(() => editarCliente(id, { ativo: false }), "Cliente desativado.").then((ok) => ok && onFechar());
+              onClick={async () => {
+                if ((await confirmar(`Desativar ${c.nome}? Ele some da busca, mas o histórico fica guardado.`))) void acao(() => editarCliente(id, { ativo: false }), "Cliente desativado.").then((ok) => ok && onFechar());
               }}
             >
               Desativar
             </button>
           ) : null}
           <span style={{ flex: 1 }} />
-          <button type="button" className="btn btn-pri" onClick={() => navegar(`/painel/delivery/novo?cliente=${id}`)}>
+          <button type="button" className="btn btn-pri" onClick={async () => navegar(`/painel/delivery/novo?cliente=${id}`)}>
             <Icone nome="delivery" /> Novo delivery
           </button>
         </>
@@ -318,7 +325,7 @@ function Ficha({ id, onFechar, onMudou }: { id: number; onFechar: () => void; on
             <div className="linha" style={{ justifyContent: "space-between" }}>
               <h3 style={{ margin: 0 }}>Dados</h3>
               {!editando ? (
-                <button type="button" className="btn-link" onClick={() => setEditando(true)}>
+                <button type="button" className="btn-link" onClick={async () => setEditando(true)}>
                   <Icone nome="lapis" tam={16} /> Editar
                 </button>
               ) : null}
@@ -340,7 +347,7 @@ function Ficha({ id, onFechar, onMudou }: { id: number; onFechar: () => void; on
                   <input value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} />
                 </label>
                 <div className="linha">
-                  <button type="button" className="btn" onClick={() => setEditando(false)}>
+                  <button type="button" className="btn" onClick={async () => setEditando(false)}>
                     Cancelar
                   </button>
                   <button type="button" className="btn btn-pri" disabled={ocupado} onClick={salvarDados}>
@@ -373,7 +380,7 @@ function Ficha({ id, onFechar, onMudou }: { id: number; onFechar: () => void; on
             <div className="linha" style={{ justifyContent: "space-between" }}>
               <h3 style={{ margin: 0 }}>Endereços</h3>
               {!novoEnd ? (
-                <button type="button" className="btn-link" onClick={() => setNovoEnd(ENDERECO_VAZIO)}>
+                <button type="button" className="btn-link" onClick={async () => setNovoEnd(ENDERECO_VAZIO)}>
                   <Icone nome="mais" tam={16} /> Novo endereço
                 </button>
               ) : null}
@@ -388,11 +395,11 @@ function Ficha({ id, onFechar, onMudou }: { id: number; onFechar: () => void; on
                 </span>
                 <span className="linha">
                   {!e.principal ? (
-                    <button type="button" className="btn-link" disabled={ocupado} onClick={() => void acao(() => editarEndereco(id, e.id, { principal: true }), "Endereço principal trocado.")}>
+                    <button type="button" className="btn-link" disabled={ocupado} onClick={async () => void acao(() => editarEndereco(id, e.id, { principal: true }), "Endereço principal trocado.")}>
                       Tornar principal
                     </button>
                   ) : null}
-                  <button type="button" className="btn-link" disabled={ocupado} onClick={() => confirm("Remover este endereço?") && void acao(() => editarEndereco(id, e.id, { ativo: false }), "Endereço removido.")}>
+                  <button type="button" className="btn-link" disabled={ocupado} onClick={async () => (await confirmar("Remover este endereço?")) && void acao(() => editarEndereco(id, e.id, { ativo: false }), "Endereço removido.")}>
                     Remover
                   </button>
                 </span>
@@ -402,7 +409,7 @@ function Ficha({ id, onFechar, onMudou }: { id: number; onFechar: () => void; on
               <div className="cartao pilha">
                 <FormEndereco valor={novoEnd} onMudar={setNovoEnd} erros={errosEnd} />
                 <div className="linha">
-                  <button type="button" className="btn" onClick={() => setNovoEnd(null)}>
+                  <button type="button" className="btn" onClick={async () => setNovoEnd(null)}>
                     Cancelar
                   </button>
                   <button type="button" className="btn btn-pri" disabled={ocupado} onClick={salvarEndereco}>

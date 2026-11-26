@@ -77,7 +77,7 @@ export default function ConectarCelulares() {
   return (
     <div className="pilha conectar" style={{ gap: 16 }}>
       <Faixa tom="info" titulo="O celular precisa estar no mesmo Wi-Fi deste computador">
-        Aponte a câmera para um dos QRs. Depois cada pessoa entra com o próprio usuário e senha: o QR não leva senha.
+        Comece pelo QR do navegador. Depois cada pessoa entra com o próprio usuário e senha: o QR não leva senha.
       </Faixa>
 
       {con.enderecos.length > 1 ? (
@@ -109,7 +109,7 @@ export default function ConectarCelulares() {
             <p className="qr-endereco">{web}</p>
             <p className="pequeno muted">Sem câmera? Digite este endereço no navegador. No iPhone: Compartilhar › Adicionar à Tela de Início.</p>
           </section>
-          <section className="cartao qr-cartao">
+          <details className="cartao qr-cartao"><summary>Alternativa: aplicativo Android já instalado</summary>
             <h2>
               <Icone nome="aparelho" /> App Android
             </h2>
@@ -119,7 +119,7 @@ export default function ConectarCelulares() {
               IP {ip} · porta {con.porta}
             </p>
             <p className="pequeno muted">Sem câmera? No app, toque em “Digitar endereço” e use o IP e a porta acima.</p>
-          </section>
+          </details>
         </div>
       </div>
 

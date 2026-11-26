@@ -40,7 +40,7 @@ function linhaItem(i: Item) {
 
 /**
  * Pranchas 04a–04e: mapa de mesas com estado escrito (não só cor), painel da conta sempre visível no PC
- * e "Fechar conta e receber" como ação principal. No celular a conta abre numa folha.
+ * e "Receber conta" como ação principal. No celular a conta abre numa folha.
  */
 export default function MapaMesas() {
   const navegar = useNavigate();
@@ -178,7 +178,7 @@ export default function MapaMesas() {
   if (!mesas.length)
     return (
       <div className="cartao">
-        <Vazio icone="mesas" titulo="Nenhuma mesa cadastrada">
+        <Vazio icone="mesas" titulo="Nenhuma mesa cadastrada" acao={gestao ? <button type="button" className="btn" onClick={() => navegar("/painel/cadastro-mesas")}>Cadastrar mesas</button> : undefined}>
           {gestao ? "Cadastre as mesas em Configurações › Mesas." : "Peça ao gerente para cadastrar as mesas."}
         </Vazio>
       </div>
@@ -240,7 +240,7 @@ export default function MapaMesas() {
       ) : null}
       {podeOperarCaixa() ? (
         <button type="button" className="btn btn-pri btn-g btn-bloco" onClick={() => navegar(`/painel/conta/${det.id}`)}>
-          Fechar conta e receber
+          Receber conta
         </button>
       ) : (
         <p className="onde-fica" style={{ margin: 0 }}>
@@ -293,6 +293,7 @@ export default function MapaMesas() {
             <span className="sr">Buscar mesa ou cliente</span>
             <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar mesa ou cliente" style={{ minHeight: 42 }} />
           </label>
+          {gestao ? <button type="button" className="btn" onClick={() => navegar("/painel/cadastro-mesas")}>Gerenciar mesas</button> : null}
         </div>
         {lista.length === 0 ? (
           <Vazio icone="lupa" titulo="Nenhuma mesa neste filtro" />
@@ -356,7 +357,7 @@ export default function MapaMesas() {
       {modal && modal !== "detalhe-cel" ? (
         <Dialogo
           titulo={modal === "transferir" ? "Transferir para outra mesa" : modal === "juntar" ? `Juntar outra mesa na mesa ${det?.mesa?.numero}` : `Cancelar a conta ${det?.codigo_atendimento}`}
-          sub={modal === "cancelar" ? "Os itens saem da conta e a cozinha é avisada. Fica na auditoria." : undefined}
+          sub={modal === "cancelar" ? "Os itens saem da conta e a cozinha é avisada. Fica na auditoria." : modal === "transferir" ? `A conta da mesa ${mesaSel?.numero ?? ""} será transferida para o destino escolhido. A mesa de origem ficará livre.` : modal === "juntar" ? `Os pedidos e valores da mesa escolhida entrarão na conta da mesa ${mesaSel?.numero ?? ""}. A mesa de origem ficará livre.` : undefined}
           onFechar={() => setModal(null)}
           fecharComEsc={!ocupado}
           pe={
@@ -364,7 +365,7 @@ export default function MapaMesas() {
               <button type="button" className="btn" onClick={() => setModal(null)}>
                 Voltar
               </button>
-              <button type="button" className={`btn ${modal === "cancelar" ? "btn-perigo" : "btn-pri"}`} disabled={ocupado} onClick={acaoModal}>
+              <button type="button" className={`btn ${modal === "cancelar" ? "btn-perigo" : "btn-pri"}`} disabled={ocupado || (modal === "cancelar" ? !motivo.trim() : !alvo)} onClick={acaoModal}>
                 {modal === "transferir" ? "Transferir" : modal === "juntar" ? "Juntar" : "Cancelar conta"}
               </button>
             </>
@@ -398,6 +399,7 @@ export default function MapaMesas() {
               </select>
             </label>
           ) : null}
+          {modal !== "cancelar" && alvo ? <p className="feedback-card">{modal === "transferir" ? `Origem: mesa ${det?.mesa?.numero ?? ""} · ${formatarReais(det?.totais?.total_centavos ?? 0)}. Destino: mesa ${mesas.find(m => m.id === Number(alvo))?.numero}. A mesa de origem ficará livre.` : `A conta da mesa ${mesas.find(m => m.atendimento_aberto?.id === Number(alvo))?.numero} (${formatarReais(mesas.find(m => m.atendimento_aberto?.id === Number(alvo))?.atendimento_aberto?.total_centavos ?? 0)}) será incorporada à mesa ${det?.mesa?.numero}. Total combinado: ${formatarReais((det?.totais?.total_centavos ?? 0) + (mesas.find(m => m.atendimento_aberto?.id === Number(alvo))?.atendimento_aberto?.total_centavos ?? 0))}. A mesa incorporada ficará livre.`}</p> : null}
           {modal === "cancelar" ? (
             <>
               <label className="fld">

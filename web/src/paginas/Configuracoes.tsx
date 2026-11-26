@@ -1,14 +1,21 @@
+import { lerRascunhoSeguro, useEdicaoPendente, podeTrocarEdicao } from "../hooks/useRascunho";
+import CampoImagem from "./cardapio/CampoImagem";
+import { enviarImagemCardapio } from "./cardapio/imagem";
+import Aparelho from "./Aparelho";
+import Formulario from "../componentes/Formulario";
+import { confirmar } from "../servicos/dialogos";
 import { useCallback, useEffect, useState } from "react";
+import AbaMesas from "./configuracoes/AbaMesas";
 import AbaEntrega from "./configuracoes/AbaEntrega";
 import AbaOperacao from "./configuracoes/AbaOperacao";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
 import { lerUsuario } from "../auth/sessao";
 import { api } from "../servicos/api";
 import { rotuloDocumento } from "../util/rotulos";
 import { formatarReais, reaisParaCentavos } from "../util/dinheiro";
 
-type AbaConfig = "estabelecimento" | "operacao" | "entrega" | "impressoras";
+type AbaConfig = "estabelecimento" | "operacao" | "entrega" | "impressoras" | "mesas" | "aparelho";
 
 type Config = {
   configurado: boolean;
@@ -171,7 +178,10 @@ export default function Configuracoes() {
 }
 
 function ConfiguracoesPagina() {
-  const [aba, setAba] = useState<AbaConfig>("estabelecimento");
+  const [params, setParams] = useSearchParams();
+  const solicitada = params.get("aba") ?? "estabelecimento";
+  const aba: AbaConfig = ["estabelecimento", "operacao", "entrega", "impressoras", "mesas", "aparelho"].includes(solicitada) ? solicitada as AbaConfig : "estabelecimento";
+  const setAba = (valor: AbaConfig) => setParams({ aba: valor });
   const [erro, setErro] = useState("");
   const [ok, setOk] = useState("");
 
@@ -184,7 +194,7 @@ function ConfiguracoesPagina() {
             Configurações
             <Ajuda texto="Dados do restaurante e impressoras térmicas ESC/POS. Só ROOT e ADMIN editam. A impressão sai sempre pelo servidor, nunca pelo navegador." />
           </h2>
-          <p>Identidade do restaurante e cadastro de impressoras de rede (TCP 9100).</p>
+          <p>Dados do estabelecimento, regras de operação, entregas e impressão.</p>
         </div>
       </section>
 
@@ -192,7 +202,7 @@ function ConfiguracoesPagina() {
         <button
           type="button"
           className={`aba${aba === "estabelecimento" ? " on" : ""}`}
-          onClick={() => {
+          onClick={async () => {
             setAba("estabelecimento");
             setErro("");
             setOk("");
@@ -203,7 +213,7 @@ function ConfiguracoesPagina() {
         <button
           type="button"
           className={`aba${aba === "impressoras" ? " on" : ""}`}
-          onClick={() => {
+          onClick={async () => {
             setAba("impressoras");
             setErro("");
             setOk("");
@@ -211,18 +221,18 @@ function ConfiguracoesPagina() {
         >
           Impressoras
         </button>
-        {(["operacao", "entrega"] as const).map((a) => (
+        {(["operacao", "entrega", "mesas", "aparelho"] as const).map((a) => (
           <button
             key={a}
             type="button"
             className={`aba${aba === a ? " on" : ""}`}
-            onClick={() => {
+            onClick={async () => {
               setAba(a);
               setErro("");
               setOk("");
             }}
           >
-            {a === "operacao" ? "Operação" : "Entrega"}
+            {a === "operacao" ? "Operação" : a === "mesas" ? "Gerenciar mesas" : a === "aparelho" ? "Este aparelho" : "Entrega"}
           </button>
         ))}
       </div>
@@ -234,6 +244,10 @@ function ConfiguracoesPagina() {
         <AbaEstabelecimento setErro={setErro} setOk={setOk} />
       ) : aba === "operacao" ? (
         <AbaOperacao />
+      ) : aba === "aparelho" ? (
+        <Aparelho />
+      ) : aba === "mesas" ? (
+        <AbaMesas />
       ) : aba === "entrega" ? (
         <AbaEntrega />
       ) : (
@@ -251,8 +265,10 @@ function AbaEstabelecimento({
   setOk: (v: string) => void;
 }) {
   const [form, setForm] = useState(vazio);
+  const [arquivoLogo, setArquivoLogo] = useState<File | null>(null);
   const [configurado, setConfigurado] = useState(false);
   const [carregando, setCarregando] = useState(true);
+  const marcarSalvo = useEdicaoPendente("config:estabelecimento", form, !carregando);
   const [salvando, setSalvando] = useState(false);
 
   const setCampo = (chave: keyof ReturnType<typeof vazio>, valor: string) => {
@@ -290,6 +306,7 @@ function AbaEstabelecimento({
           dados.taxa_entrega_centavos != null
             ? (dados.taxa_entrega_centavos / 100).toFixed(2).replace(".", ",")
             : "0",
+        ...(lerRascunhoSeguro<ReturnType<typeof vazio>>("config:estabelecimento") ?? {}),
       });
     } catch (e) {
       setErro((e as Error).message);
@@ -319,6 +336,7 @@ function AbaEstabelecimento({
     setSalvando(true);
     setErro("");
     try {
+      const caminhoLogo = arquivoLogo ? await enviarImagemCardapio(arquivoLogo) : form.caminho_logo;
       const salvo = (await api("/configuracoes", {
         method: "PUT",
         body: JSON.stringify({
@@ -336,11 +354,12 @@ function AbaEstabelecimento({
           bairro: form.bairro.trim() || null,
           cidade: form.cidade.trim() || null,
           uf: form.uf.trim() ? form.uf.trim().toUpperCase() : null,
-          caminho_logo: form.caminho_logo.trim() || null,
+          caminho_logo: caminhoLogo || null,
           mensagem_cupom: form.mensagem_cupom.trim() || null,
           taxa_entrega_centavos: taxa,
         }),
       })) as Config;
+      marcarSalvo(); setArquivoLogo(null);
       setConfigurado(Boolean(salvo.configurado));
       setOk(configurado ? "Configurações salvas" : "Restaurante configurado");
       await carregar();
@@ -362,12 +381,12 @@ function AbaEstabelecimento({
         </Link>
       </div>
       <div className="config-toolbar">
-        <button type="button" className="btn-sec" onClick={() => void carregar()} disabled={carregando}>
+        <button type="button" className="btn-sec" onClick={async () => void carregar()} disabled={carregando}>
           {carregando ? "Carregando…" : "Atualizar"}
         </button>
       </div>
 
-      <form className="painel-bloco config-form" onSubmit={salvar}>
+      <Formulario className="painel-bloco config-form" onSubmit={salvar}>
         <div className="drawer-bloco">
           <p className="bloco-variante-titulo titulo-com-ajuda">
             Identidade
@@ -417,7 +436,7 @@ function AbaEstabelecimento({
                 WhatsApp
                 <Ajuda texto="Número pra pedidos / atendimento. Ainda não envia mensagem automático." />
               </span>
-              <input value={form.whatsapp} onChange={(e) => setCampo("whatsapp", e.target.value)} />
+              <input aria-label="WhatsApp" value={form.whatsapp} onChange={(e) => setCampo("whatsapp", e.target.value)} />
             </label>
             <label className="campo">
               <span>E-mail comercial</span>
@@ -500,17 +519,7 @@ function AbaEstabelecimento({
                 placeholder="0,00"
               />
             </label>
-            <label className="campo">
-              <span className="campo-com-ajuda">
-                Caminho do logo
-                <Ajuda texto="Por enquanto só o caminho do arquivo (ex: fotos/logo.png). Upload de imagem vem depois." />
-              </span>
-              <input
-                value={form.caminho_logo}
-                onChange={(e) => setCampo("caminho_logo", e.target.value)}
-                placeholder="fotos/logo.png"
-              />
-            </label>
+            <div className="campo"><span>Logo do restaurante</span><CampoImagem titulo="Logo do restaurante" vazio="Sem logo: o cupom mostrará o nome do restaurante." caminho={form.caminho_logo || null} onArquivo={setArquivoLogo} onRemover={() => { setCampo("caminho_logo", ""); setArquivoLogo(null); }} /></div>
             <label className="campo config-span-2">
               <span>Mensagem do cupom</span>
               <input
@@ -527,7 +536,7 @@ function AbaEstabelecimento({
             {salvando ? "Salvando…" : configurado ? "Salvar configurações" : "Salvar primeiro cadastro"}
           </button>
         </div>
-      </form>
+      </Formulario>
     </>
   );
 }
@@ -560,6 +569,12 @@ function AbaImpressoras({
   const [docs, setDocs] = useState<ConfigDocumento[]>([]);
   const [configurado, setConfigurado] = useState(false);
   const [salvandoRota, setSalvandoRota] = useState(false);
+  const [secaoImpressora, setSecaoImpressora] = useState<"equipamentos" | "destinos" | "documentos">("equipamentos");
+  const [docsAlterados, setDocsAlterados] = useState(false);
+  const [nomeRestaurante, setNomeRestaurante] = useState("");
+  const marcarEquipamentoSalvo = useEdicaoPendente(`impressora:${editId ?? "nova"}`, form, modo !== null);
+  const marcarImpressaoSalvo = useEdicaoPendente("config:impressao", { padraoId, producaoId, contaId, caixaId, usaTelaCozinha }, !carregando);
+  const marcarDocsSalvos = useEdicaoPendente("config:documentos", docs, !carregando);
 
   const carregarSistema = useCallback(async () => {
     setCarregandoSistema(true);
@@ -598,7 +613,10 @@ function AbaImpressoras({
       setContaId(cfg.impressora_conta_id != null ? String(cfg.impressora_conta_id) : "");
       setCaixaId(cfg.impressora_caixa_id != null ? String(cfg.impressora_caixa_id) : "");
       setUsaTelaCozinha(cfg.usa_tela_cozinha !== false);
-      setDocs(docsRes ?? []);
+      const rota = lerRascunhoSeguro<{ padraoId: string; producaoId: string; contaId: string; caixaId: string; usaTelaCozinha: boolean }>("config:impressao");
+      if (rota) { setPadraoId(rota.padraoId); setProducaoId(rota.producaoId); setContaId(rota.contaId); setCaixaId(rota.caixaId); setUsaTelaCozinha(rota.usaTelaCozinha); }
+      const documentos = lerRascunhoSeguro<ConfigDocumento[]>("config:documentos");
+      setDocs(documentos ?? docsRes ?? []); setDocsAlterados(!!documentos);
       void carregarSistema();
     } catch (e) {
       setErro((e as Error).message);
@@ -612,25 +630,28 @@ function AbaImpressoras({
     void carregar();
   }, [carregar]);
 
-  function abrirCriar() {
+  async function abrirCriar() {
+    if (!await podeTrocarEdicao()) return;
     setModo("criar");
     setEditId(null);
-    setForm(formImpVazio());
+    setForm(lerRascunhoSeguro<FormImp>("impressora:nova") ?? formImpVazio());
     setOk("");
     setErro("");
   }
 
-  function abrirEditar(imp: Impressora, manterAviso = false) {
+  async function abrirEditar(imp: Impressora, manterAviso = false) {
+    if (!manterAviso && !await podeTrocarEdicao()) return;
     setModo("editar");
     setEditId(imp.id);
-    setForm(formFromImp(imp));
+    setForm(lerRascunhoSeguro<FormImp>(`impressora:${imp.id}`) ?? formFromImp(imp));
     if (!manterAviso) {
       setOk("");
       setErro("");
     }
   }
 
-  function fecharPainel() {
+  async function fecharPainel() {
+    if (!await podeTrocarEdicao()) return;
     setModo(null);
     setEditId(null);
     setForm(formImpVazio());
@@ -707,6 +728,7 @@ function AbaImpressoras({
         setOk("Impressora atualizada");
       }
 
+      marcarEquipamentoSalvo();
       await carregar();
       if (id != null) {
         const atualizadas = (await api(`/impressoras?ativos=${filtro}`)) as Impressora[];
@@ -722,7 +744,7 @@ function AbaImpressoras({
   }
 
   async function desativar(imp: Impressora) {
-    if (!confirm(`Desativar impressora "${imp.nome}"?`)) return;
+    if (!(await confirmar(`Desativar impressora "${imp.nome}"?`))) return;
     setErro("");
     try {
       await api(`/impressoras/${imp.id}`, { method: "DELETE" });
@@ -782,8 +804,8 @@ function AbaImpressoras({
 
   async function salvarRoteamento(e: React.FormEvent) {
     e.preventDefault();
-    if (!configurado) {
-      return setErro("Cadastre o estabelecimento antes de definir impressoras padrão.");
+    if (!configurado && !nomeRestaurante.trim()) {
+      return setErro("Informe o nome do restaurante para salvar o primeiro cadastro e os destinos.");
     }
     setSalvandoRota(true);
     setErro("");
@@ -791,6 +813,7 @@ function AbaImpressoras({
       await api("/configuracoes", {
         method: "PUT",
         body: JSON.stringify({
+          ...(!configurado ? { nome_restaurante: nomeRestaurante.trim() } : {}),
           impressora_padrao_id: padraoId ? Number(padraoId) : null,
           impressora_producao_id: producaoId ? Number(producaoId) : null,
           impressora_conta_id: contaId ? Number(contaId) : null,
@@ -798,6 +821,7 @@ function AbaImpressoras({
           usa_tela_cozinha: usaTelaCozinha,
         }),
       });
+      marcarImpressaoSalvo();
       setOk("Destinos da loja salvos");
       await carregar();
     } catch (err) {
@@ -807,18 +831,13 @@ function AbaImpressoras({
     }
   }
 
-  async function salvarDoc(doc: ConfigDocumento, patch: Partial<ConfigDocumento>) {
-    setErro("");
-    try {
-      const up = (await api(`/config-documentos/${doc.tipo}`, {
-        method: "PUT",
-        body: JSON.stringify(patch),
-      })) as ConfigDocumento;
-      setDocs((lista) => lista.map((d) => (d.tipo === up.tipo ? up : d)));
-      setOk(`${rotuloDocumento(doc.tipo)}: configuração salva`);
-    } catch (err) {
-      setErro((err as Error).message);
-    }
+  function salvarDoc(doc: ConfigDocumento, patch: Partial<ConfigDocumento>) {
+    setDocs(lista => lista.map(d => d.tipo === doc.tipo ? { ...d, ...patch } : d)); setDocsAlterados(true);
+  }
+  async function salvarDocumentos() {
+    setSalvandoRota(true); setErro("");
+    try { for (const d of docs) await api(`/config-documentos/${d.tipo}`, { method: "PUT", body: JSON.stringify({ modo: d.modo, vias: d.vias, abre_gaveta: d.abre_gaveta }) }); setDocsAlterados(false); setOk("Regras de documentos salvas."); marcarDocsSalvos(); }
+    catch(e) { setErro((e as Error).message); } finally { setSalvandoRota(false); }
   }
 
   async function toggleNaoImprime(cat: CategoriaOpt) {
@@ -846,7 +865,9 @@ function AbaImpressoras({
         estar ligado e na mesma rede.
       </p>
 
-      <form className="painel-bloco config-roteamento" onSubmit={salvarRoteamento}>
+      <nav className="abas" aria-label="Configuração de impressão">{(["equipamentos", "destinos", "documentos"] as const).map(v => <button key={v} type="button" className={`aba${secaoImpressora === v ? " on" : ""}`} onClick={() => setSecaoImpressora(v)}>{v === "equipamentos" ? "Equipamentos" : v === "destinos" ? "Destinos" : "Documentos"}</button>)}</nav>
+      <div hidden={secaoImpressora !== "destinos"}>
+      <Formulario className="painel-bloco config-roteamento" onSubmit={salvarRoteamento}>
         <div className="config-roteamento-cab">
           <div>
             <p className="bloco-variante-titulo titulo-com-ajuda" style={{ margin: 0 }}>
@@ -854,13 +875,25 @@ function AbaImpressoras({
               <Ajuda texto="Ordem: categoria → produção padrão → padrão da loja. Conta → caixa → padrão. Comprovante/relatório → caixa → padrão." />
             </p>
             <p className="ajuda" style={{ margin: "4px 0 0" }}>
-              Com impressoras ativas, a padrão da loja é obrigatória.
+              Com impressoras ativas, a padrão da loja é obrigatória. Alterações entram em vigor ao salvar esta seção.
             </p>
           </div>
-          <button type="submit" className="btn-sec" disabled={salvandoRota || !configurado}>
+          <button type="submit" className="btn-sec" disabled={salvandoRota || carregando}>
             {salvandoRota ? "Salvando…" : "Salvar destinos"}
           </button>
         </div>
+        {!carregando && !configurado ? (
+          <label className="campo" style={{ marginBottom: 12 }}>
+            <span>Nome do restaurante</span>
+            <input
+              value={nomeRestaurante}
+              onChange={(e) => setNomeRestaurante(e.target.value)}
+              required
+              placeholder="Nome do estabelecimento"
+            />
+            <small className="ajuda">O primeiro cadastro será salvo junto com os destinos. Complete os demais dados na aba Estabelecimento.</small>
+          </label>
+        ) : null}
         <div className="config-grid-2">
           <label className="campo">
             <span>Impressora padrão da loja</span>
@@ -915,10 +948,12 @@ function AbaImpressoras({
           />
           <span>Usa tela de cozinha</span>
         </label>
-      </form>
+      </Formulario></div>
 
-      <section className="painel-bloco" style={{ marginTop: 16 }}>
+      <section hidden={secaoImpressora !== "documentos"} className="painel-bloco" style={{ marginTop: 16 }}>
         <p className="bloco-variante-titulo">Documentos</p>
+        <p className="estado-salvamento">{docsAlterados ? "Alterações ainda não salvas" : "Regras salvas"}</p>
+        <button type="button" className="btn btn-pri" disabled={!docsAlterados || salvandoRota} onClick={() => void salvarDocumentos()}>Salvar regras de documentos</button>
         <p className="ajuda">Modo, vias (1–3) e gaveta (só comprovante/relatório de caixa).</p>
         <div className="tabela-docs">
           {docs.map((d) => (
@@ -966,6 +1001,7 @@ function AbaImpressoras({
         </div>
       </section>
 
+      <div hidden={secaoImpressora !== "equipamentos"}>
       <section className="painel-bloco" style={{ marginTop: 16 }}>
         <p className="bloco-variante-titulo">Categorias que não imprimem</p>
         <p className="ajuda">Água/geladeira: ticket de produção não é gerado.</p>
@@ -993,7 +1029,7 @@ function AbaImpressoras({
               </p>
             </div>
             <div className="config-toolbar-inline">
-              <button type="button" className="btn-sec" onClick={() => void carregar()} disabled={carregando}>
+              <button type="button" className="btn-sec" onClick={async () => void carregar()} disabled={carregando}>
                 {carregando ? "…" : "Atualizar"}
               </button>
               <button type="button" className="btn-prim" onClick={abrirCriar}>
@@ -1006,14 +1042,14 @@ function AbaImpressoras({
             <button
               type="button"
               className={`aba${filtro === "1" ? " on" : ""}`}
-              onClick={() => setFiltro("1")}
+              onClick={async () => setFiltro("1")}
             >
               Ativas
             </button>
             <button
               type="button"
               className={`aba${filtro === "0" ? " on" : ""}`}
-              onClick={() => setFiltro("0")}
+              onClick={async () => setFiltro("0")}
             >
               Inativas
             </button>
@@ -1034,7 +1070,7 @@ function AbaImpressoras({
               const st = statusVisual(imp.ultimo_status, imp.ativo);
               return (
                 <li key={imp.id} className={`prod-item${editId === imp.id ? " editando" : ""}`}>
-                  <button type="button" className="prod-info prod-info-btn" onClick={() => abrirEditar(imp)}>
+                  <button type="button" className="prod-info prod-info-btn" onClick={async () => abrirEditar(imp)}>
                     <strong className="imp-nome-linha">
                       <span className={`imp-status-dot ${st.classe}`} title={st.rotulo} aria-label={st.rotulo} />
                       {imp.nome}
@@ -1053,15 +1089,15 @@ function AbaImpressoras({
                     </span>
                   </button>
                   <div className="prod-acoes">
-                    <button type="button" className="btn-ghost" onClick={() => abrirEditar(imp)}>
+                    <button type="button" className="btn-ghost" onClick={async () => abrirEditar(imp)}>
                       Editar
                     </button>
                     {imp.ativo ? (
-                      <button type="button" className="btn-ghost" onClick={() => void desativar(imp)}>
+                      <button type="button" className="btn-ghost" onClick={async () => void desativar(imp)}>
                         Desativar
                       </button>
                     ) : (
-                      <button type="button" className="btn-ghost" onClick={() => void reativar(imp)}>
+                      <button type="button" className="btn-ghost" onClick={async () => void reativar(imp)}>
                         Reativar
                       </button>
                     )}
@@ -1074,7 +1110,7 @@ function AbaImpressoras({
 
         {painelAberto ? (
           <aside className="painel-bloco painel-drawer">
-            <form className="form-drawer" onSubmit={salvar}>
+            <Formulario className="form-drawer" onSubmit={salvar}>
               <div className="form-produto-titulo">
                 <div>
                   <span className="painel-sobretitulo">
@@ -1166,7 +1202,7 @@ function AbaImpressoras({
                         type="button"
                         className="btn-sec"
                         disabled={carregandoSistema}
-                        onClick={() => void carregarSistema()}
+                        onClick={async () => void carregarSistema()}
                       >
                         {carregandoSistema ? "Atualizando…" : "Atualizar lista do SO"}
                       </button>
@@ -1298,11 +1334,11 @@ function AbaImpressoras({
                       : ""}
                   </p>
                   <div className="form-acoes" style={{ borderTop: 0, paddingTop: 0 }}>
-                    <button type="button" className="btn-sec" disabled={testando || !editando.ativo} onClick={() => void imprimirTeste()}>
+                    <button type="button" className="btn-sec" disabled={testando || !editando.ativo} onClick={async () => void imprimirTeste()}>
                       {testando ? "Enviando…" : "Imprimir teste"}
                     </button>
                     {form.tem_gaveta ? (
-                      <button type="button" className="btn-sec" disabled={testando || !editando.ativo} onClick={() => void testarGaveta()}>
+                      <button type="button" className="btn-sec" disabled={testando || !editando.ativo} onClick={async () => void testarGaveta()}>
                         Testar gaveta
                       </button>
                     ) : null}
@@ -1318,9 +1354,10 @@ function AbaImpressoras({
                   Cancelar
                 </button>
               </div>
-            </form>
+            </Formulario>
           </aside>
         ) : null}
+      </div>
       </div>
     </>
   );

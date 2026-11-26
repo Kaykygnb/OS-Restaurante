@@ -29,8 +29,8 @@ test("mesa: abre uma mesa livre e envia o pedido", async ({ page }) => {
   await expect(page.getByText("Mesa 1 aberta. Lance os itens.")).toBeVisible();
   await page.getByRole("tab", { name: "Bebidas" }).click();
   await page.getByText("Coca-Cola lata").first().click();
-  await page.getByRole("button", { name: "Adicionar", exact: true }).click();
-  if (ehCelular(page)) await page.getByText("Ver pedido").click();
+  await page.getByRole("button", { name: "Adicionar ao pedido", exact: true }).click();
+  if ((page.viewportSize()?.width ?? 1366) <= 900) await page.getByText("Ver pedido").click();
   await page.locator("button:visible", { hasText: "Enviar pedido" }).first().click();
   await expect(page.getByText(/enviado/i).first()).toBeVisible();
 });
@@ -75,6 +75,8 @@ test("cozinha: cozinheiro vê as colunas do KDS por estação", async ({ page })
   await expect(novos.getByRole("article")).toHaveCount(1);
   await novos.getByRole("button", { name: "Começar" }).click();
   await expect(page.getByRole("region", { name: "Em preparo" }).getByRole("article")).toHaveCount(1);
+  await page.getByRole("region", { name: "Em preparo" }).getByRole("button", { name: "Pronto", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Prontos" }).getByRole("article")).toHaveCount(1);
   await page.getByRole("button", { name: "Bar", exact: true }).click();
   await expect(page.getByRole("button", { name: "Bar", exact: true })).toHaveAttribute("aria-pressed", "true");
 });

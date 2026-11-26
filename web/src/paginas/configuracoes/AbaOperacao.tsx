@@ -1,3 +1,4 @@
+import { lerRascunhoSeguro, useEdicaoPendente } from "../../hooks/useRascunho";
 import { useCallback, useEffect, useState } from "react";
 import { Carregando, ErroCarga, Faixa } from "../../componentes/ui/Estados";
 import { useSistema } from "../../estado/sistema-ctx";
@@ -23,6 +24,7 @@ export default function AbaOperacao() {
   const [gaveta, setGaveta] = useState(false);
   const [nivel, setNivel] = useState(0);
   const [salvando, setSalvando] = useState(false);
+  const marcarSalvo = useEdicaoPendente("config:operacao", { serv, limite, atraso, gaveta, nivel }, cfg !== null);
 
   const carregar = useCallback(() => {
     (api("/configuracoes") as Promise<Cfg>)
@@ -34,6 +36,8 @@ export default function AbaOperacao() {
         setAtraso(String(c.kds_atraso_min ?? 15));
         setGaveta(!!c.usa_gaveta);
         setNivel(c.estoque_nivel ?? 0);
+        const r = lerRascunhoSeguro<{serv: string; limite: string; atraso: string; gaveta: boolean; nivel: number}>("config:operacao");
+        if (r) { setServ(r.serv); setLimite(r.limite); setAtraso(r.atraso); setGaveta(r.gaveta); setNivel(r.nivel); }
       })
       .catch((e: ApiErro) => setErro(e.message));
   }, []);
@@ -50,6 +54,7 @@ export default function AbaOperacao() {
         method: "PUT",
         body: JSON.stringify({ taxa_servico_percentual: s, limite_desconto_sem_pin_centavos: reaisParaCentavos(limite), kds_atraso_min: a, usa_gaveta: gaveta, estoque_nivel: nivel }),
       });
+      marcarSalvo();
       avisar("Configurações salvas.", "ok");
       window.dispatchEvent(new Event("osr:caixa-mudou"));
       carregar();
@@ -102,7 +107,7 @@ export default function AbaOperacao() {
             <input type="radio" name="nivel" checked={nivel === n.n} onChange={() => setNivel(n.n)} />
             <span>
               <strong>
-                Nível {n.n} · {n.t}
+                {n.t}
               </strong>
               <br />
               <span className="muted pequeno">{n.d}</span>
@@ -111,6 +116,7 @@ export default function AbaOperacao() {
         ))}
         <Faixa tom="info">Insumos, ficha técnica, nota fiscal e lotes (níveis 3 e 4) ainda não estão disponíveis.</Faixa>
       </section>
+      <p className="estado-salvamento">Salve para aplicar as alterações. Um rascunho é mantido neste navegador.</p>
       <div className="linha">
         <button type="button" className="btn btn-pri btn-g" disabled={salvando} onClick={salvar}>
           {salvando ? "Salvando…" : "Salvar"}

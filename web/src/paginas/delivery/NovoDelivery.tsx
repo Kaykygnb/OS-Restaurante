@@ -1,3 +1,4 @@
+import { lerRascunhoSeguro, useEdicaoPendente } from "../../hooks/useRascunho";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { lerUsuario } from "../../auth/sessao";
@@ -26,14 +27,15 @@ export default function NovoDelivery() {
   const [params] = useSearchParams();
   const { avisar } = useSistema();
   const gestor = GESTAO.includes(lerUsuario()?.tipo ?? "");
-  const [passo, setPasso] = useState<1 | 2>(1);
-  const [tel, setTel] = useState("");
-  const [cliente, setCliente] = useState<Cliente | null>(null);
+  const r = lerRascunhoSeguro<{ passo: 1 | 2; tel: string; cliente: Cliente | null; endId: number | null; novoEnd: EnderecoInput | null }>("delivery:novo");
+  const [passo, setPasso] = useState<1 | 2>(r?.passo ?? 1);
+  const [tel, setTel] = useState(r?.tel ?? "");
+  const [cliente, setCliente] = useState<Cliente | null>(r?.cliente ?? null);
   const [naoAchou, setNaoAchou] = useState(false);
   const [buscando, setBuscando] = useState(false);
   const [cadastrar, setCadastrar] = useState(false);
-  const [endId, setEndId] = useState<number | null>(null);
-  const [novoEnd, setNovoEnd] = useState<EnderecoInput | null>(null);
+  const [endId, setEndId] = useState<number | null>(r?.endId ?? null);
+  const [novoEnd, setNovoEnd] = useState<EnderecoInput | null>(r?.novoEnd ?? null);
   const [errosEnd, setErrosEnd] = useState<Record<string, string>>({});
   const [cot, setCot] = useState<Cotacao | null>(null);
   const [cotando, setCotando] = useState(false);
@@ -47,6 +49,7 @@ export default function NovoDelivery() {
   const [enviando, setEnviando] = useState(false);
   const [atId, setAtId] = useState<number | null>(null);
 
+  const marcarSalvo = useEdicaoPendente("delivery:novo", { passo, tel, cliente, endId, novoEnd });
   useEffect(() => {
     lerConfigOperacao()
       .then((c) => setLimite(c.limite_desconto_sem_pin_centavos))
@@ -140,7 +143,7 @@ export default function NovoDelivery() {
         ...(precisaPin ? { aprovacao: { aprovador_id: Number(aprovador), pin } } : {}),
       });
       avisar("Delivery criado. Agora lance os itens.", "ok");
-      navegar(`/painel/pdv/${id}`);
+      marcarSalvo(); navegar(`/painel/pdv/${id}`);
     } catch (e) {
       const err = e as ApiErro;
       setErro(err.codigo === "pin_invalido" ? "PIN do gerente não confere. Confira e tente de novo." : err.message);
@@ -157,7 +160,7 @@ export default function NovoDelivery() {
         <button type="button" aria-current={passo === 1 ? "step" : undefined} className={passo > 1 ? "feito" : ""} onClick={() => setPasso(1)}>
           1 Cliente
         </button>
-        <button type="button" aria-current={passo === 2 ? "step" : undefined} disabled={!cliente}>
+        <button type="button" aria-current={passo === 2 ? "step" : undefined} disabled={!cliente} onClick={() => setPasso(2)}>
           2 Endereço e taxa
         </button>
         <button type="button" disabled>
@@ -327,7 +330,7 @@ export default function NovoDelivery() {
       ) : null}
 
       {cadastrar ? (
-        <NovoCliente
+        <NovoCliente enderecoInicial
           telefoneInicial={tel}
           onFechar={() => setCadastrar(false)}
           onCriado={(c) => {

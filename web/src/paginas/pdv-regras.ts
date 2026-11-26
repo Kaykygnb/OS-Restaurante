@@ -1,3 +1,4 @@
+import { lerUsuario } from "../auth/sessao";
 /** Regras puras do PDV (sem React), testadas no Vitest. */
 
 export type Opcao = { id: number; nome: string; preco_extra_centavos: number };
@@ -75,12 +76,12 @@ export function alternarEscolha(
   return { selecao: next };
 }
 
-const CHAVE = (id: number) => `pdv-rascunho-${id}`;
+const CHAVE = (id: number) => `osr:rascunho:${lerUsuario()?.id ?? "anonimo"}:pdv-${id}`;
 
 /** Rascunho do carrinho neste aparelho: não some se a tela apagar ou o garçom sair sem enviar. */
 export function lerRascunho(atendimentoId: number): CarrinhoLinha[] {
   try {
-    const raw = localStorage.getItem(CHAVE(atendimentoId));
+    const raw = sessionStorage.getItem(CHAVE(atendimentoId));
     const lista = raw ? (JSON.parse(raw) as CarrinhoLinha[]) : [];
     return Array.isArray(lista) ? lista : [];
   } catch {
@@ -90,8 +91,8 @@ export function lerRascunho(atendimentoId: number): CarrinhoLinha[] {
 
 export function gravarRascunho(atendimentoId: number, carrinho: CarrinhoLinha[]) {
   try {
-    if (carrinho.length) localStorage.setItem(CHAVE(atendimentoId), JSON.stringify(carrinho));
-    else localStorage.removeItem(CHAVE(atendimentoId));
+    if (carrinho.length) sessionStorage.setItem(CHAVE(atendimentoId), JSON.stringify(carrinho));
+    else sessionStorage.removeItem(CHAVE(atendimentoId));
   } catch {
     /* armazenamento cheio ou bloqueado: segue sem rascunho */
   }
@@ -99,7 +100,7 @@ export function gravarRascunho(atendimentoId: number, carrinho: CarrinhoLinha[])
 
 export function apagarRascunho(atendimentoId: number) {
   try {
-    localStorage.removeItem(CHAVE(atendimentoId));
+    sessionStorage.removeItem(CHAVE(atendimentoId));
   } catch {
     /* nada */
   }

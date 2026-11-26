@@ -1,3 +1,4 @@
+import Formulario from "../../componentes/Formulario";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { lerUsuario } from "../../auth/sessao";
@@ -98,7 +99,8 @@ export default function CaixaTela() {
         <aside className="cartao pilha">
           {gestor ? (
             <>
-              <h3 style={{ margin: 0 }}>Quanto deve ter (só gerente vê)</h3>
+              <h3 style={{ margin: 0 }}>Composição do esperado</h3>
+              {previa?.composicao ? <dl className="composicao-caixa">{Object.entries({ "Fundo de troco": previa.composicao.fundo_centavos, "Recebimentos": previa.composicao.recebimentos_centavos, "Suprimentos": previa.composicao.suprimentos_centavos, "Sangrias (saída)": -previa.composicao.sangrias_centavos }).map(([nome, valor]) => <div key={nome}><dt>{nome}</dt><dd>{formatarReais(valor)}</dd></div>)}</dl> : null}
               {previa ? (
                 <table className="tabela">
                   <tbody>
@@ -189,7 +191,7 @@ function AbrirCaixa({ usaGaveta }: { usaGaveta: boolean }) {
     }
   }
   return (
-    <form className="cartao pilha" style={{ maxWidth: 520 }} onSubmit={abrir}>
+    <Formulario className="cartao pilha" style={{ maxWidth: 520 }} onSubmit={abrir}>
       <h2 style={{ margin: 0 }}>Abrir o caixa</h2>
       <p className="muted" style={{ margin: 0 }}>
         Sem caixa aberto ninguém recebe. O caixa fica aberto mesmo se você trocar de usuário ou desligar o PC.
@@ -203,7 +205,7 @@ function AbrirCaixa({ usaGaveta }: { usaGaveta: boolean }) {
       <button className="btn btn-pri btn-g" disabled={enviando}>
         {enviando ? "Abrindo…" : "Abrir caixa"}
       </button>
-    </form>
+    </Formulario>
   );
 }
 

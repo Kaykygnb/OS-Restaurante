@@ -1,3 +1,6 @@
+import { lerRascunhoSeguro, podeTrocarEdicao, useEdicaoPendente, useProtecaoSensivel } from "../hooks/useRascunho";
+import Formulario from "../componentes/Formulario";
+import { confirmar } from "../servicos/dialogos";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Navigate } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
@@ -29,7 +32,7 @@ type FiltroAtivos = "1" | "0";
 const TIPOS_GESTAO = new Set(["ROOT", "ADMIN", "GERENTE"]);
 
 const ROTULO_TIPO: Record<TipoUsuario, string> = {
-  ROOT: "Root",
+  ROOT: "Suporte",
   ADMIN: "Administrador",
   GERENTE: "Gerente",
   ATENDENTE: "Atendente",
@@ -60,6 +63,7 @@ function BlocoPin({
   const [pin, setPin] = useState("");
   const [confirmar, setConfirmar] = useState("");
   const [salvando, setSalvando] = useState(false);
+  useProtecaoSensivel(`usuario:${usuarioId}:segredo`, !!(pin || confirmar));
   const valido = /^\d{4,8}$/.test(pin) && pin === confirmar;
 
   async function salvar(e: React.FormEvent) {
@@ -85,7 +89,7 @@ function BlocoPin({
   const soNumeros = (v: string) => v.replace(/\D/g, "").slice(0, 8);
 
   return (
-    <form className="bloco-escolhas" onSubmit={salvar} autoComplete="off">
+    <Formulario className="bloco-escolhas" onSubmit={salvar} autoComplete="off">
       <p className="bloco-variante-titulo titulo-com-ajuda">
         PIN de aprovação
         <Ajuda texto="O gerente digita este PIN no aparelho do garçom para aprovar desconto, sangria e abrir a gaveta. Não é a senha de login." />
@@ -118,7 +122,7 @@ function BlocoPin({
       <button type="submit" className="btn-sec" disabled={salvando || !valido}>
         {salvando ? "Salvando…" : "Definir PIN"}
       </button>
-    </form>
+    </Formulario>
   );
 }
 
@@ -148,12 +152,15 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
   const [email, setEmail] = useState("");
   const [telefone, setTelefone] = useState("");
   const [matricula, setMatricula] = useState("");
+  const [operaCaixa, setOperaCaixa] = useState(false);
   const [senha, setSenha] = useState("");
   const [confirmarSenha, setConfirmarSenha] = useState("");
 
+  const marcarSalvo = useEdicaoPendente(`usuario:${editId ?? "novo"}`, { nome, login, tipo, email, telefone, matricula, operaCaixa }, modo !== null && !carregando);
   const [novaSenha, setNovaSenha] = useState("");
   const [confirmarNovaSenha, setConfirmarNovaSenha] = useState("");
 
+  const limparProtecao = useProtecaoSensivel("usuario:segredos", !!(senha || confirmarSenha || novaSenha || confirmarNovaSenha));
   const carregar = useCallback(async () => {
     setCarregando(true);
     setErro("");
@@ -181,12 +188,13 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
     [lista, editId]
   );
 
-  function limparForm() {
+  async function limparForm() {
+    if (!await podeTrocarEdicao()) return;
     setModo(null);
     setEditId(null);
     setNome("");
     setLogin("");
-    setTipo(tiposCriaveis[0] ?? "");
+    setTipo(tiposCriaveis.includes("ATENDENTE") ? "ATENDENTE" : "");
     setEmail("");
     setTelefone("");
     setMatricula("");
@@ -196,12 +204,16 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
     setConfirmarNovaSenha("");
   }
 
-  function abrirCriar() {
+  async function abrirCriar() {
+    if (!await podeTrocarEdicao()) return;
+    const r = lerRascunhoSeguro<{ nome: string; login: string; tipo: TipoUsuario; email: string; telefone: string; matricula: string; operaCaixa?: boolean }>("usuario:novo");
+    if (r) { setModo("criar"); setEditId(null); setNome(r.nome); setLogin(r.login); setTipo(tiposCriaveis.includes(r.tipo) ? r.tipo : tiposCriaveis.includes("ATENDENTE") ? "ATENDENTE" : ""); setOperaCaixa(r.operaCaixa ?? false); setEmail(r.email); setTelefone(r.telefone); setMatricula(r.matricula); setSenha(""); setConfirmarSenha(""); return; }
     setModo("criar");
+    setOperaCaixa(false);
     setEditId(null);
     setNome("");
     setLogin("");
-    setTipo(tiposCriaveis[0] ?? "");
+    setTipo(tiposCriaveis.includes("ATENDENTE") ? "ATENDENTE" : "");
     setEmail("");
     setTelefone("");
     setMatricula("");
@@ -213,15 +225,17 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
     setErro("");
   }
 
-  function abrirEditar(u: Usuario) {
+  async function abrirEditar(u: Usuario) {
+    if (!await podeTrocarEdicao()) return;
     setModo("editar");
     setEditId(u.id);
-    setNome(u.nome);
+    const r = lerRascunhoSeguro<{ nome: string; email: string; telefone: string; matricula: string; tipo: TipoUsuario }>(`usuario:${u.id}`);
+    setNome(r?.nome ?? u.nome);
     setLogin(u.login);
-    setTipo(u.tipo_usuario);
-    setEmail(u.email ?? "");
-    setTelefone(u.telefone ?? "");
-    setMatricula(u.matricula ?? "");
+    setTipo(r?.tipo ?? u.tipo_usuario);
+    setEmail(r?.email ?? u.email ?? "");
+    setTelefone(r?.telefone ?? u.telefone ?? "");
+    setMatricula(r?.matricula ?? u.matricula ?? "");
     setSenha("");
     setConfirmarSenha("");
     setNovaSenha("");
@@ -252,12 +266,14 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
             login: login.trim(),
             senha,
             confirmar_senha: confirmarSenha,
+            pode_operar_caixa: operaCaixa,
             tipo_usuario: tipo,
             email: email.trim() || undefined,
             telefone: telefone.trim() || undefined,
             matricula: matricula.trim() || undefined,
           }),
         });
+        marcarSalvo(); limparProtecao();
         setOk("Usuário criado");
         limparForm();
       } else if (modo === "editar" && editId) {
@@ -271,6 +287,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
             matricula: matricula.trim() || null,
           }),
         });
+        marcarSalvo();
         setOk("Dados atualizados");
       }
       await carregar();
@@ -306,7 +323,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
 
   async function desativar(u: Usuario) {
     if (u.id === meuId) return setErro("Você não pode desativar a si mesmo");
-    if (!confirm(`Desativar ${u.nome}? O login deixa de funcionar.`)) return;
+    if (!(await confirmar(`Desativar ${u.nome}? O login deixa de funcionar.`))) return;
     setErro("");
     try {
       await api(`/usuarios/${u.id}`, { method: "DELETE" });
@@ -358,7 +375,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
             Cadastre a equipe, ajuste dados e redefina senha quando alguém esquecer.
           </p>
         </div>
-        <button type="button" className="btn-sec" onClick={() => void carregar()} disabled={carregando}>
+        <button type="button" className="btn-sec" onClick={async () => void carregar()} disabled={carregando}>
           {carregando ? "Atualizando…" : "Atualizar"}
         </button>
       </section>
@@ -384,14 +401,14 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
             <button
               type="button"
               className={`aba${filtro === "1" ? " on" : ""}`}
-              onClick={() => setFiltro("1")}
+              onClick={async () => setFiltro("1")}
             >
               Ativos
             </button>
             <button
               type="button"
               className={`aba${filtro === "0" ? " on" : ""}`}
-              onClick={() => setFiltro("0")}
+              onClick={async () => setFiltro("0")}
             >
               Inativos
             </button>
@@ -410,7 +427,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
             ) : null}
             {lista.map((u) => (
               <li key={u.id} className={`prod-item${editId === u.id ? " editando" : ""}`}>
-                <button type="button" className="prod-info prod-info-btn" onClick={() => abrirEditar(u)}>
+                <button type="button" className="prod-info prod-info-btn" onClick={async () => abrirEditar(u)}>
                   <strong>{u.nome}</strong>
                   <span className="prod-meta">
                     @{u.login}
@@ -433,7 +450,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                       <input type="checkbox" checked={!!u.pode_operar_caixa} onChange={(e) => void trocarCaixa(u, e.target.checked)} /> Pode operar caixa
                     </label>
                   ) : null}
-                  <button type="button" className="btn-ghost" onClick={() => abrirEditar(u)}>
+                  <button type="button" className="btn-ghost" onClick={async () => abrirEditar(u)}>
                     Editar
                   </button>
                   {u.ativo ? (
@@ -441,12 +458,12 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                       type="button"
                       className="btn-ghost"
                       disabled={u.id === meuId || u.tipo_usuario === "ROOT"}
-                      onClick={() => void desativar(u)}
+                      onClick={async () => void desativar(u)}
                     >
                       Desativar
                     </button>
                   ) : (
-                    <button type="button" className="btn-ghost" onClick={() => void reativar(u)}>
+                    <button type="button" className="btn-ghost" onClick={async () => void reativar(u)}>
                       Reativar
                     </button>
                   )}
@@ -458,7 +475,8 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
 
         {painelAberto ? (
           <aside className="painel-bloco painel-drawer">
-            <form className="form-drawer" onSubmit={salvarDados}>
+            <Formulario className="form-drawer" onSubmit={salvarDados}>
+              {erro ? <p className="feedback-card feedback-erro" role="alert">{erro}</p> : null}
               <div className="form-produto-titulo">
                 <div>
                   <span className="painel-sobretitulo">
@@ -472,16 +490,18 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
               </div>
 
               <div className="drawer-bloco">
+                <h3>Identificação e acesso</h3>
                 <label className="campo">
-                  <span>Nome</span>
+                  <span>Nome *</span>
                   <input value={nome} onChange={(e) => setNome(e.target.value)} required placeholder="Nome completo" />
                 </label>
                 <label className="campo">
                   <span className="campo-com-ajuda">
-                    Login
+                    Login *
                     <Ajuda texto="Usado para entrar no sistema. Não muda depois de criar." />
                   </span>
                   <input
+                    aria-label="Login"
                     value={login}
                     onChange={(e) => setLogin(e.target.value)}
                     required={modo === "criar"}
@@ -492,15 +512,15 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                 </label>
                 <label className="campo">
                   <span className="campo-com-ajuda">
-                    Tipo
+                    Perfil de acesso *
                     <Ajuda texto="Define o que a pessoa pode fazer. Você só vê tipos que sua hierarquia permite criar." />
                   </span>
-                  <select
+                  <select aria-label="Perfil de acesso"
                     value={tipo}
                     onChange={(e) => setTipo(e.target.value as TipoUsuario)}
                     required
                   >
-                    {tiposCriaveis.length === 0 ? <option value="">Sem permissão</option> : null}
+                    <option value="">Escolha o perfil…</option>
                     {tiposCriaveis.map((t) => (
                       <option key={t} value={t}>
                         {ROTULO_TIPO[t]}
@@ -511,6 +531,8 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                     ) : null}
                   </select>
                 </label>
+                <p className="feedback-card">{tipo === "ADMIN" ? "Administrador: gerencia cadastros, configurações e equipe abaixo de sua hierarquia." : tipo === "GERENTE" ? "Gerente: acompanha vendas, equipe e operação; aprova ações por PIN." : tipo === "ATENDENTE" ? "Atendente: abre contas e lança pedidos. A permissão de caixa é concedida separadamente." : tipo === "COZINHEIRO" ? "Cozinheiro: acompanha e atualiza o preparo dos pedidos." : tipo === "ENTREGADOR" ? "Entregador: acompanha a operação de entregas." : "Suporte: administração técnica do sistema."}</p>
+                <details><summary>Contatos e matrícula (opcional)</summary>
                 <label className="campo">
                   <span>E-mail (opcional)</span>
                   <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
@@ -522,13 +544,14 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                 <label className="campo">
                   <span>Matrícula (opcional)</span>
                   <input value={matricula} onChange={(e) => setMatricula(e.target.value)} />
-                </label>
+                </label></details>
               </div>
 
+              {modo === "criar" && ["ROOT", "ADMIN"].includes(lerUsuario()?.tipo ?? "") ? <label className="check"><input type="checkbox" checked={operaCaixa} onChange={e => setOperaCaixa(e.target.checked)} /> Pode operar caixa (abrir, receber e fechar)</label> : null}
               {modo === "criar" ? (
                 <div className="drawer-bloco">
                   <p className="bloco-variante-titulo titulo-com-ajuda">
-                    Senha inicial
+                    Senha inicial — mínimo 8 caracteres
                     <Ajuda texto="Mínimo 8 caracteres. Passe essa senha para a pessoa no primeiro acesso." />
                   </p>
                   <label className="campo">
@@ -559,7 +582,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                   {salvando ? "Salvando…" : modo === "criar" ? "Criar usuário" : "Salvar dados"}
                 </button>
               </div>
-            </form>
+            </Formulario>
 
             {modo === "editar" && editando && APROVAM.has(editando.tipo_usuario) && editando.ativo ? (
               <BlocoPin
@@ -572,7 +595,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
             ) : null}
 
             {modo === "editar" && editId && editId !== meuId ? (
-              <form className="bloco-escolhas" onSubmit={redefinirSenha}>
+              <Formulario className="bloco-escolhas" onSubmit={redefinirSenha}>
                 <p className="bloco-variante-titulo titulo-com-ajuda">
                   Redefinir senha
                   <Ajuda texto="Você define a senha nova. O funcionário não precisa da senha antiga. Avise a pessoa depois." />
@@ -599,7 +622,7 @@ function UsuariosPainel({ meuId }: { meuId: number }) {
                 <button type="submit" className="btn-sec" disabled={salvando || novaSenha.length < 8}>
                   Definir nova senha
                 </button>
-              </form>
+              </Formulario>
             ) : null}
           </aside>
         ) : null}

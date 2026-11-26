@@ -35,6 +35,8 @@ export function estaLogado(): boolean {
 }
 
 export function sair(): void {
+  window.dispatchEvent(new Event("osr:sessao-finalizada"));
+  for (const key of Object.keys(sessionStorage)) if (key.startsWith("osr:rascunho:")) sessionStorage.removeItem(key);
   localStorage.removeItem("token");
   localStorage.removeItem("usuario");
 }

@@ -1,3 +1,5 @@
+import Formulario from "../../componentes/Formulario";
+import { confirmar } from "../../servicos/dialogos";
 import { useEffect, useState } from "react";
 import Ajuda from "../../componentes/Ajuda";
 import { api } from "../../servicos/api";
@@ -186,7 +188,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
   }
 
   async function excluirGrupo(id: number) {
-    if (!confirm("Remover este grupo e suas opções?")) return;
+    if (!(await confirmar("Remover este grupo e suas opções?"))) return;
     setErro("");
     try {
       await api(`/grupos-escolhas/${id}`, { method: "DELETE" });
@@ -219,7 +221,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
   }
 
   async function excluirOpcao(id: number) {
-    if (!confirm("Remover esta opção?")) return;
+    if (!(await confirmar("Remover esta opção?"))) return;
     setErro("");
     try {
       await api(`/opcoes-escolha/${id}`, { method: "DELETE" });
@@ -301,9 +303,9 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
     const outras = comId.filter((v) => v.id !== varianteId);
     if (outras.length === 0) return;
     if (
-      !confirm(
+      !(await confirmar(
         `Copiar ${grupos.length} grupo(s) de opcionais para ${outras.length} outra(s) opção(ões) de preço?`
-      )
+      ))
     ) {
       return;
     }
@@ -395,7 +397,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
               key={p.nome}
               type="button"
               className="chip chip-btn"
-              onClick={() => aplicarPreset(p)}
+              onClick={async () => aplicarPreset(p)}
             >
               {p.nome}
             </button>
@@ -403,7 +405,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
         </div>
       </div>
 
-      <form className="form-escolha-grupo" onSubmit={criarGrupo}>
+      <Formulario className="form-escolha-grupo" onSubmit={criarGrupo}>
         <label className="campo">
           <span>Nome do grupo</span>
           <input
@@ -449,7 +451,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
             <button
               type="button"
               className="btn-sec"
-              onClick={() => setOpcoesNovas((lista) => [...lista, novaLinhaOpcao()])}
+              onClick={async () => setOpcoesNovas((lista) => [...lista, novaLinhaOpcao()])}
             >
               + opção
             </button>
@@ -481,7 +483,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
                   type="button"
                   className="btn-ghost"
                   disabled={opcoesNovas.length <= 1}
-                  onClick={() => setOpcoesNovas((lista) => lista.filter((x) => x.chave !== o.chave))}
+                  onClick={async () => setOpcoesNovas((lista) => lista.filter((x) => x.chave !== o.chave))}
                 >
                   ×
                 </button>
@@ -493,7 +495,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
         <button type="submit" className="btn-prim" disabled={salvando || !varianteId}>
           {salvando ? "Salvando…" : "Adicionar grupo de opcionais"}
         </button>
-      </form>
+      </Formulario>
 
       {carregando ? <p className="ajuda">Carregando opcionais…</p> : null}
 
@@ -502,7 +504,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
           type="button"
           className="btn-sec"
           disabled={salvando}
-          onClick={() => void copiarParaOutrasVariantes()}
+          onClick={async () => void copiarParaOutrasVariantes()}
         >
           Copiar estes opcionais para P/M/G…
         </button>
@@ -521,7 +523,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
         {grupos.map((g) => (
           <li key={g.id} className="grupo-escolha-item">
             {editandoGrupoId === g.id ? (
-              <form className="form-escolha-grupo" onSubmit={salvarGrupoEdit}>
+              <Formulario className="form-escolha-grupo" onSubmit={salvarGrupoEdit}>
                 <label className="campo">
                   <span>Nome</span>
                   <input value={editNomeGrupo} onChange={(e) => setEditNomeGrupo(e.target.value)} />
@@ -550,11 +552,11 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
                 </label>
                 <div className="form-acoes">
                   <button type="submit">Salvar</button>
-                  <button type="button" className="btn-ghost" onClick={() => setEditandoGrupoId(null)}>
+                  <button type="button" className="btn-ghost" onClick={async () => setEditandoGrupoId(null)}>
                     Cancelar
                   </button>
                 </div>
-              </form>
+              </Formulario>
             ) : (
               <div className="grupo-escolha-cab">
                 <div>
@@ -573,7 +575,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
                     className="btn-icon"
                     aria-label={`Editar ${g.nome}`}
                     title="Editar"
-                    onClick={() => abrirEditarGrupo(g)}
+                    onClick={async () => abrirEditarGrupo(g)}
                   >
                     ✎
                   </button>
@@ -582,7 +584,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
                     className="btn-icon btn-icon-danger"
                     aria-label={`Remover ${g.nome}`}
                     title="Remover"
-                    onClick={() => void excluirGrupo(g.id)}
+                    onClick={async () => void excluirGrupo(g.id)}
                   >
                     ×
                   </button>
@@ -597,7 +599,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
               {g.opcoes_escolha.map((o) => (
                 <li key={o.id}>
                   {editandoOpcaoId === o.id ? (
-                    <form className="linha-variante" onSubmit={salvarOpcaoEdit} style={{ width: "100%" }}>
+                    <Formulario className="linha-variante" onSubmit={salvarOpcaoEdit} style={{ width: "100%" }}>
                       <input value={editNomeOpcao} onChange={(e) => setEditNomeOpcao(e.target.value)} />
                       <input
                         value={editPrecoOpcao}
@@ -607,7 +609,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
                       <button type="submit" className="btn-sec">
                         OK
                       </button>
-                    </form>
+                    </Formulario>
                   ) : (
                     <>
                       <span>
@@ -621,7 +623,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
                           type="button"
                           className="btn-icon"
                           aria-label={`Editar ${o.nome}`}
-                          onClick={() => abrirEditarOpcao(o)}
+                          onClick={async () => abrirEditarOpcao(o)}
                         >
                           ✎
                         </button>
@@ -629,7 +631,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
                           type="button"
                           className="btn-icon btn-icon-danger"
                           aria-label={`Remover ${o.nome}`}
-                          onClick={() => void excluirOpcao(o.id)}
+                          onClick={async () => void excluirOpcao(o.id)}
                         >
                           ×
                         </button>
@@ -652,7 +654,7 @@ export default function EscolhasBloco({ produtoId, variantes, setErro, setOk, on
                 placeholder="Extra R$"
                 inputMode="decimal"
               />
-              <button type="button" className="btn-sec" onClick={() => void adicionarOpcao(g.id)}>
+              <button type="button" className="btn-sec" onClick={async () => void adicionarOpcao(g.id)}>
                 +
               </button>
             </div>

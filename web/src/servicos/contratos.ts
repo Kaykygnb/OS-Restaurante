@@ -41,6 +41,7 @@ export type CaixaAtual = {
 };
 /** GET /caixa/previa. esperado_centavos só vem para GERENTE+ (fechamento cego). */
 export type CaixaPrevia = {
+  composicao?: { fundo_centavos: number; recebimentos_centavos: number; suprimentos_centavos: number; sangrias_centavos: number };
   sessao_id: number;
   sessao_anterior: boolean;
   formas: { forma_pagamento_id: number; nome: string; esperado_centavos?: number }[];
@@ -262,3 +263,13 @@ export type KdsResposta = { estacao: "cozinha" | "bar"; atraso_min: number; agor
 
 /** 409 ao abrir mesa ocupada: devolve a conta que já está aberta. */
 export type ErroMesaOcupada = { erro: string; codigo: "mesa_ocupada"; atendimento_id: number | null; codigo_atendimento: string | null };
+
+/** Gravação transacional; IDs omitidos criam registros, IDs existentes são preservados. */
+export type ProdutoCadastro = {
+  nome: string; descricao?: string | null; caminho_imagem?: string | null; categoria_id: number;
+  exige_preparo: boolean; controla_estoque?: boolean;
+  variantes: { id?: number; nome: string; preco_centavos: number; grupos: {
+    id?: number; nome: string; min_escolhas: number; max_escolhas: number; permite_repetir: boolean;
+    opcoes: { id?: number; nome: string; preco_extra_centavos: number }[];
+  }[] }[];
+};

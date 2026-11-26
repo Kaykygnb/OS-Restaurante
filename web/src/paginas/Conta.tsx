@@ -1,3 +1,5 @@
+import Formulario from "../componentes/Formulario";
+import AtendimentoAcoes from "../componentes/AtendimentoAcoes";
 import { lerConfigOperacao } from "../servicos/rotas";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
@@ -34,27 +36,18 @@ type AtendimentoConta = {
   cliente_nome: string | null;
   mesa: { numero: number } | null;
   desconto_centavos: number;
+  acrescimo_centavos?: number;
   taxa_servico_centavos: number;
   taxa_servico_aplicada: boolean;
   taxa_entrega_centavos: number;
-  pedidos?: { codigo_pedido: string; itens: Omit<ItemConta, "codigo_pedido">[] }[];
-  pagamentos?: { id: number; valor_centavos: number; troco_centavos?: number; forma_pagamento?: { nome: string } }[];
+  pedidos?: { id: number; status: string; codigo_pedido: string; itens: Omit<ItemConta, "codigo_pedido">[] }[];
+  pagamentos?: { estornado_em?: string | null; id: number; valor_centavos: number; troco_centavos?: number; forma_pagamento?: { nome: string } }[];
   totais?: { subtotal_centavos: number; total_centavos: number; pago_centavos: number; restante_centavos: number };
 };
 
 type Config = { taxa_servico_percentual?: number; limite_desconto_sem_pin_centavos?: number };
 
 const GESTAO = new Set(["ROOT", "ADMIN", "GERENTE"]);
-
-/** Enquanto o servidor não manda o total de cada item, a tela calcula (vai divergir quando houver promoção). */
-function itemLinhaCentavos(i: ItemConta) {
-  if (i.cancelado) return 0;
-  if (typeof i.total_centavos === "number") return i.total_centavos;
-  const extras =
-    (i.escolhas ?? []).reduce((s, e) => s + e.preco_extra_centavos * e.quantidade, 0) +
-    (i.adicionais ?? []).reduce((s, a) => s + a.preco_centavos * a.quantidade, 0);
-  return i.quantidade * (i.preco_centavos + extras);
-}
 
 type Confirmacao =
   | { tipo: "pagar"; valor: number; recebido: number; chave: string }
@@ -300,6 +293,7 @@ export default function Conta() {
 
       <Avisos erro={confirmacao ? "" : erro} ok={ok} avisos={avisos} />
 
+
       {aberta && caixaAberto === false ? (
         <p className="feedback-card config-aviso-ip" role="status">
           O caixa está fechado: dá para lançar e imprimir a pré-conta, mas não para receber.{" "}
@@ -313,53 +307,9 @@ export default function Conta() {
         <section className="painel-bloco">
           <header className="painel-bloco-cab">
             <h2>Itens</h2>
-            <span className="ajuda">{itens.filter((i) => !i.cancelado).length} ativos</span>
+            <span className="ajuda">{itens.filter((i) => !i.cancelado).reduce((s,i) => s + i.quantidade, 0)} unidades · {itens.filter((i) => !i.cancelado).length} produtos</span>
           </header>
-          <ul className="conta-itens">
-            {itens.length === 0 ? (
-              <li className="lista-vazia">
-                <strong>Sem itens</strong>
-                <span>
-                  <Link to={`/painel/pdv/${id}`}>Lançar no PDV</Link>
-                </span>
-              </li>
-            ) : (
-              itens.map((i) => (
-                <li key={i.id} className={i.cancelado ? "cancelado" : ""}>
-                  <div>
-                    <strong>
-                      {i.quantidade}× {i.nome_produto}
-                    </strong>
-                    <span>
-                      {i.codigo_pedido}
-                      {[
-                        ...(i.escolhas ?? []).map((e) => e.nome_opcao),
-                        ...(i.adicionais ?? []).map((a) => `+ ${a.nome_adicional}`),
-                      ].map((t) => ` · ${t}`)}
-                      {i.observacao ? ` · ${i.observacao}` : ""}
-                      {i.cancelado ? " · cancelado" : ""}
-                    </span>
-                  </div>
-                  <em>{formatarReais(itemLinhaCentavos(i))}</em>
-                </li>
-              ))
-            )}
-          </ul>
-
-          {(at.pagamentos?.length ?? 0) > 0 ? (
-            <div className="conta-pagamentos-hist">
-              <p className="bloco-variante-titulo">Pagamentos</p>
-              <ul>
-                {at.pagamentos!.map((p) => (
-                  <li key={p.id}>
-                    <span>{p.forma_pagamento?.nome ?? "—"}</span>
-                    <strong>{formatarReais(p.valor_centavos)}</strong>
-                    {p.troco_centavos ? <em>troco {formatarReais(p.troco_centavos)}</em> : null}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
+          <AtendimentoAcoes atendimento={at} onAtualizar={carregar} />
         </section>
 
         <aside className="painel-bloco conta-painel">
@@ -380,6 +330,7 @@ export default function Conta() {
                 <strong>{formatarReais(at.taxa_servico_centavos)}</strong>
               </div>
             ) : null}
+            {at.acrescimo_centavos ? <div><span>Acréscimo</span><strong>{formatarReais(at.acrescimo_centavos)}</strong></div> : null}
             {at.taxa_entrega_centavos ? (
               <div>
                 <span>Entrega</span>
@@ -426,7 +377,7 @@ export default function Conta() {
               </div>
 
               {mostrarAjustes ? (
-                <form
+                <Formulario
                   className="conta-ajustes"
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -461,10 +412,10 @@ export default function Conta() {
                   <button type="submit" className="btn-sec" disabled={busy}>
                     Aplicar desconto
                   </button>
-                </form>
+                </Formulario>
               ) : null}
 
-              <form
+              <Formulario
                 className="conta-pagar"
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -472,7 +423,7 @@ export default function Conta() {
                 }}
               >
                 <p className="bloco-variante-titulo" id="titulo-formas">
-                  Receber
+                  Receber pagamento
                 </p>
                 <div className="pdv-chips" role="radiogroup" aria-labelledby="titulo-formas">
                   {formas.map((f) => (
@@ -490,7 +441,7 @@ export default function Conta() {
                 </div>
                 <div className="config-grid-2">
                   <label className="campo">
-                    <span>Valor</span>
+                    <span>Valor a receber (R$)</span>
                     <input
                       value={valorPag}
                       onChange={(e) => {
@@ -503,7 +454,7 @@ export default function Conta() {
                   </label>
                   {forma?.abre_gaveta ? (
                     <label className="campo">
-                      <span>Recebido</span>
+                      <span>Valor recebido (R$)</span>
                       <input
                         value={recebido}
                         onChange={(e) => setRecebido(e.target.value)}
@@ -520,19 +471,17 @@ export default function Conta() {
                     className="btn-sec"
                     disabled={busy || restante <= 0 || caixaAberto === false}
                     onClick={() => {
-                      setValorPag(centavosParaCampo(restante));
-                      editouValor.current = false;
-                      pedirPagamento(restante);
+                      setValorPag(centavosParaCampo(restante)); editouValor.current = true;
                     }}
                   >
-                    Pagar restante
+                    Usar saldo restante
                   </button>
                   <button type="submit" className="btn-prim" disabled={busy || restante <= 0 || caixaAberto === false}>
-                    Receber
+                    Receber pagamento
                   </button>
                 </div>
                 {!formaId ? <p className="ajuda">Escolha a forma de pagamento.</p> : null}
-              </form>
+              </Formulario>
 
               <button
                 type="button"

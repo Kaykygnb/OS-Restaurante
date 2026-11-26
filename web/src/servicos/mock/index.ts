@@ -8,8 +8,9 @@
  *  - localStorage.mock_offline = "1" → servidor "desligado" (toda chamada falha como sem conexão)
  *  - ?mock_reset=1 na URL zera o banco
  */
+import type { GrupoAdicionais } from "../../paginas/cardapio/tipos";
 import { cotar, normalizarBairro, taxaManualPrecisaPin } from "../../util/entrega";
-import type { BairroEntrega, PedidoItemInput, ConfigEntrega, Endereco, EnderecoInput, Modulos } from "../contratos";
+import type { ProdutoCadastro, BairroEntrega, PedidoItemInput, ConfigEntrega, Endereco, EnderecoInput, Modulos } from "../contratos";
 import { BAIRROS_GEO, cardapioInicial, CEPS, FORMAS, ORIGEM, PIN_GERENTE, USUARIOS, type MockCategoria } from "./semente";
 
 type Corpo = Record<string, unknown>;
@@ -119,6 +120,8 @@ type EventoMock = {
   hash_anterior: string;
 };
 type Banco = {
+  grupos_adicionais?: GrupoAdicionais[];
+  usuarios_novos?: { id: number; nome: string; login: string; tipo_usuario: string; ativo: boolean; pode_operar_caixa: boolean; matricula: null; email: null; telefone: null; createdAt: string; updatedAt: string }[];
   seq: number;
   /** Ajustes de "Pode operar caixa" feitos na tela de Usuários (PATCH /usuarios/:id). */
   usuarios_caixa?: Record<string, boolean>;
@@ -750,7 +753,7 @@ rota("GET", "/usuarios", (_m, _c, ctx, url) => {
   const t = usuarioDoToken(ctx.token)?.tipo ?? "";
   if (!GESTAO.has(t)) return erro(403, "sem_permissao", "Sem permissão");
   if (url.searchParams.get("ativos") === "0") return ok([]);
-  return ok(USUARIOS.filter((u) => t === "ROOT" || u.tipo !== "ROOT").sort((a, z) => ORDEM_TIPO.indexOf(a.tipo) - ORDEM_TIPO.indexOf(z.tipo) || a.nome.localeCompare(z.nome)).map(usuarioPublico));
+  return ok([...USUARIOS.filter((u) => t === "ROOT" || u.tipo !== "ROOT").sort((a, z) => ORDEM_TIPO.indexOf(a.tipo) - ORDEM_TIPO.indexOf(z.tipo) || a.nome.localeCompare(z.nome)).map(usuarioPublico), ...(db().usuarios_novos ?? [])]);
 });
 rota("PATCH", "/usuarios/(\\d+)", (m, c, ctx) => {
   const quem = usuarioDoToken(ctx.token)?.tipo ?? "";
@@ -764,6 +767,16 @@ rota("PATCH", "/usuarios/(\\d+)", (m, c, ctx) => {
   b.usuarios_caixa = { ...(b.usuarios_caixa ?? {}), [String(alvo.id)]: Boolean(c.pode_operar_caixa) };
   salvar();
   return ok(usuarioPublico(alvo));
+});
+
+rota("POST", "/usuarios", (_m,c,ctx) => {
+  const quem = usuarioDoToken(ctx.token)?.tipo ?? "";
+  if (!(CRIAVEIS[quem] ?? []).includes(String(c.tipo_usuario))) return erro(403,"sem_permissao","Perfil não permitido.");
+  if (String(c.senha).length < 8 || c.senha !== c.confirmar_senha || !String(c.nome ?? "").trim() || !String(c.login ?? "").trim()) return erro(400,"dados_invalidos","Confira nome, login e confirmação de senha.");
+  const b = db(); const users = b.usuarios_novos ?? [];
+  if (USUARIOS.some(u => u.usuario === c.login) || users.some(u => u.login === c.login)) return erro(409,"login_existente","Login já cadastrado.");
+  const usuario = { id:b.seq++, matricula:null, tipo_usuario:String(c.tipo_usuario), nome:String(c.nome), login:String(c.login), email:null, telefone:null, ativo:true, pode_operar_caixa: Boolean(c.pode_operar_caixa), createdAt:agora(),updatedAt:agora() };
+  b.usuarios_novos = [...users,usuario]; salvar(); return ok(usuario);
 });
 // ——— promoções ———
 function promosDe(b: Banco): PromoMock[] {
@@ -1024,6 +1037,35 @@ rota("PUT", "/configuracoes", (_m, c) => {
   return ok(b.config);
 });
 
+
+// Cadastro agregado usa o mesmo formato e a mesma gravação indivisível da API.
+function produtoAdmin(p: MockCategoria["produtos"][number], categoria_id: number) {
+  return { ...p, categoria_id, ativo: true, controla_estoque: false, produto_variantes: p.variantes.map(v => ({ ...v, ativo: true, grupos_escolhas: v.grupos_escolhas.map(g => ({ ...g, ativo: true, opcoes_escolha: g.opcoes })) })) };
+}
+rota("GET", "/cardapio", () => ok(db().cardapio.map(c => ({ ...c, ativo: true, produtos: c.produtos.map(p => produtoAdmin(p,c.id)) }))));
+rota("GET", "/grupos-adicionais", () => ok(db().grupos_adicionais ?? []));
+rota("GET", "/categorias", () => ok(db().cardapio.map(c => ({ id:c.id, nome:c.nome, ordem:c.ordem }))));
+rota("POST", "/grupos-adicionais", (_m,c,ctx) => {
+ if (!GESTAO.has(usuarioDoToken(ctx.token)?.tipo ?? "")) return erro(403,"sem_permissao","Sem permissão.");
+ const ids = c.categoria_ids as number[]; if (!String(c.nome ?? "").trim() || !ids?.length) return erro(400,"dados_invalidos","Informe o nome e ao menos uma categoria.");
+ const b=db(); const grupo:GrupoAdicionais={id:b.seq++,nome:String(c.nome),ordem:0,categorias:ids.map(id=>({categoria_id:id,categoria:{id,nome:b.cardapio.find(c=>c.id===id)?.nome ?? ""}})),adicionais:[],produtos_excluidos:[]}; b.grupos_adicionais=[...(b.grupos_adicionais ?? []),grupo]; salvar(); return ok(grupo);
+});
+rota("GET", "/produtos/(\\d+)", m => { const c = db().cardapio.find(c => c.produtos.some(p => p.id === Number(m[1]))); const p = c?.produtos.find(p => p.id === Number(m[1])); return p && c ? ok(produtoAdmin(p,c.id)) : erro(404,"nao_encontrado","Produto não encontrado."); });
+function salvarProdutoMock(id: number | null, corpo: Corpo, ctx: Ctx) {
+  if (!GESTAO.has(usuarioDoToken(ctx.token)?.tipo ?? "")) return erro(403,"sem_permissao","Sem permissão.");
+  const c = corpo as unknown as ProdutoCadastro; const b = db(); const cat = b.cardapio.find(x => x.id === c.categoria_id);
+  const anterior = b.cardapio.flatMap(c => c.produtos).find(p => p.id === id);
+  if (id && !anterior) return erro(404,"nao_encontrado","Produto não encontrado.");
+  if (!cat || !c.nome?.trim() || !c.variantes?.length || c.variantes.some(v => !v.nome?.trim() || !Number.isSafeInteger(v.preco_centavos) || v.preco_centavos < 0)) return erro(400,"cadastro_invalido","Confira nome, categoria e preços.");
+  if (cat.produtos.some(p => p.id !== id && p.nome === c.nome.trim())) return erro(409,"produto_duplicado","Já existe um produto com esse nome.");
+  const produto: MockCategoria["produtos"][number] = { id: id ?? b.seq++, nome: c.nome.trim(), descricao: c.descricao ?? null, caminho_imagem: null, exige_preparo: c.exige_preparo, grupos_adicionais: anterior?.grupos_adicionais ?? [], preco_desde_centavos: Math.min(...c.variantes.map(v => v.preco_centavos)), variantes: c.variantes.map(v => ({ id: v.id ?? b.seq++, nome: v.nome, preco_centavos: v.preco_centavos, grupos_escolhas: v.grupos.map((g,i) => ({ ...g, id: g.id ?? b.seq++, ordem:i, opcoes: g.opcoes.map((o,j) => ({ ...o, id: o.id ?? b.seq++, ordem:j })) })) })) };
+  for (const cat of b.cardapio) cat.produtos = cat.produtos.filter(p => p.id !== id);
+  cat.produtos.push(produto); salvar(); return ok(produtoAdmin(produto,cat.id));
+}
+rota("POST", "/produtos/cadastro", (_m,c,ctx) => salvarProdutoMock(null,c,ctx));
+rota("PUT", "/produtos/(\\d+)/cadastro", (m,c,ctx) => salvarProdutoMock(Number(m[1]),c,ctx));
+rota("DELETE", "/produtos/(\\d+)", (m,_c,ctx) => { if (!GESTAO.has(usuarioDoToken(ctx.token)?.tipo ?? "")) return erro(403,"sem_permissao","Sem permissão."); for (const cat of db().cardapio) cat.produtos = cat.produtos.filter(p => p.id !== Number(m[1])); salvar(); return ok({ok:true}); });
+rota("POST", "/categorias", (_m,c,ctx) => { if (!GESTAO.has(usuarioDoToken(ctx.token)?.tipo ?? "")) return erro(403,"sem_permissao","Sem permissão."); const cat = { id: db().seq++, nome:String(c.nome), ordem:db().cardapio.length, produtos:[] }; db().cardapio.push(cat); salvar(); return ok(cat); });
 // ——— cardápio ———
 rota("GET", "/cardapio/pdv", () => ok(db().cardapio));
 rota("GET", "/formas-pagamento", () => ok(FORMAS));

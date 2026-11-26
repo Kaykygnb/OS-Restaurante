@@ -1,3 +1,4 @@
+import Formulario from "../../componentes/Formulario";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Dialogo from "../../componentes/ui/Dialogo";
@@ -112,20 +113,20 @@ export default function Pagamento({ total, titulo, formas, formaInicial, montarV
     <Dialogo
       titulo={`Cobrar ${formatarReais(total)}`}
       sub={titulo}
-      onFechar={onFechar}
+      onFechar={() => { if (!enviando) onFechar(); }}
       fecharComEsc={!enviando}
       pe={
-        <button type="button" className="btn btn-ok btn-g btn-bloco" disabled={enviando} onClick={() => confirmar()} data-testid="confirmar-pagamento">
+        <button type="button" className="btn btn-ok btn-g btn-bloco" disabled={enviando || typeof pagamentos() === "string" || !formaId} onClick={() => confirmar()} data-testid="confirmar-pagamento">
           {enviando ? "Confirmando…" : "Confirmar pagamento"} {!enviando ? <span className="kbd">Enter</span> : null}
         </button>
       }
     >
-      <form
+      <Formulario
         className="pilha"
         onSubmit={(e) => {
           e.preventDefault();
           if (misto && valorLinha) addLinha();
-          else confirmar();
+          else if (typeof pagamentos() !== "string" && !enviando) confirmar();
         }}
       >
         <div className="fld">
@@ -215,7 +216,7 @@ export default function Pagamento({ total, titulo, formas, formaInicial, montarV
           </Faixa>
         ) : null}
         <button type="submit" hidden />
-      </form>
+      </Formulario>
     </Dialogo>
   );
 }

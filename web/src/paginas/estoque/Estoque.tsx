@@ -1,3 +1,4 @@
+import HistoricoEstoque from "./HistoricoEstoque";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { lerUsuario } from "../../auth/sessao";
@@ -29,7 +30,7 @@ export default function Estoque() {
 
   if (nivel === 0) {
     return (
-      <Vazio icone="estoque" titulo="O controle de estoque está desligado" acao={admin ? <Link className="btn btn-pri" to="/painel/configuracoes">Abrir Configurações</Link> : undefined}>
+      <Vazio icone="estoque" titulo="O controle de estoque está desligado" acao={admin ? <Link className="btn btn-pri" to="/painel/configuracoes?aba=operacao">Abrir Configurações</Link> : undefined}>
         Escolha o nível em Configurações: 1 marca só o que acabou; 2 conta a quantidade das bebidas e itens de revenda.
       </Vazio>
     );
@@ -52,6 +53,7 @@ export default function Estoque() {
         </span>
       </div>
       {aba === "esgotados" ? <Esgotados /> : <Quantidade />}
+      {nivel >= 2 ? <HistoricoEstoque /> : null}
     </div>
   );
 }
@@ -138,6 +140,7 @@ function Quantidade() {
       })
       .catch((e: ApiErro) => setErro(e.message));
   }, []);
+  useEffect(() => { window.addEventListener("osr:estoque-mudou", carregar); return () => window.removeEventListener("osr:estoque-mudou", carregar); }, [carregar]);
   useEffect(carregar, [carregar]);
 
   if (erro) return <ErroCarga mensagem={erro} onTentar={carregar} />;
@@ -186,7 +189,7 @@ function Quantidade() {
               const s = situacao(i);
               return (
                 <tr key={i.produto_variante_id}>
-                  <td>{nomeItem(i)}</td>
+                  <td>{nomeItem(i)} <small>Variante #{i.produto_variante_id}</small></td>
                   <td className="num">
                     {i.qtd_base} {i.unidade_base}
                   </td>
@@ -202,6 +205,7 @@ function Quantidade() {
                       <button type="button" className="btn-link" onClick={() => setMov({ tipo: "PERDA", item: i })}>
                         Perda
                       </button>
+                      <button type="button" className="btn-link" onClick={() => setMov({ tipo: "CORRECAO", item: i })}>Corrigir</button>
                     </td>
                   ) : null}
                 </tr>
@@ -242,7 +246,7 @@ function Movimento({ tipo, itens, inicial, onFechar, onFeito }: { tipo: Mov; ite
 
   async function salvar() {
     if (!item) return setMsg("Escolha o produto.");
-    if (!Number.isInteger(n) || n <= 0) return setMsg("Quantidade inteira maior que zero.");
+    if (!Number.isInteger(n) || (tipo === "CORRECAO" ? n === 0 : n <= 0)) return setMsg(tipo === "CORRECAO" ? "Informe uma quantidade inteira diferente de zero; negativa diminui o saldo." : "Quantidade inteira maior que zero.");
     if (tipo !== "ENTRADA" && !motivo.trim()) return setMsg("Diga o motivo (ex.: quebrou, venceu).");
     setEnviando(true);
     setMsg("");
@@ -251,7 +255,7 @@ function Movimento({ tipo, itens, inicial, onFechar, onFeito }: { tipo: Mov; ite
         method: "POST",
         body: JSON.stringify({ tipo, item_id: item.produto_variante_id, qtd_base: n, motivo: motivo.trim() || undefined, custo_unit_centavos: custo ? reaisParaCentavos(custo) : undefined }),
       });
-      onFeito(tipo === "ENTRADA" ? `Entrada de ${n} ${item.unidade_base} em ${nomeItem(item)}.` : `Perda de ${n} ${item.unidade_base} registrada.`);
+      onFeito(tipo === "ENTRADA" ? `Entrada de ${n} ${item.unidade_base} em ${nomeItem(item)}.` : tipo === "CORRECAO" ? `Correção de ${n} ${item.unidade_base} registrada.` : `Perda de ${n} ${item.unidade_base} registrada.`);
     } catch (e) {
       setMsg((e as ApiErro).message);
     } finally {
@@ -261,8 +265,8 @@ function Movimento({ tipo, itens, inicial, onFechar, onFeito }: { tipo: Mov; ite
 
   return (
     <Dialogo
-      titulo={tipo === "ENTRADA" ? "Entrada de mercadoria" : "Registrar perda"}
-      sub={tipo === "ENTRADA" ? "Some ao saldo o que chegou." : "Tira do saldo o que quebrou, venceu ou sumiu. Fica na auditoria."}
+      titulo={tipo === "ENTRADA" ? "Entrada de mercadoria" : tipo === "CORRECAO" ? "Corrigir saldo" : "Registrar perda"}
+      sub={tipo === "CORRECAO" ? "Informe a diferença: positiva soma ao saldo, negativa retira. Ex.: saldo 8, contagem 5, ajuste -3." : tipo === "ENTRADA" ? "Some ao saldo o que chegou." : "Tira do saldo o que quebrou, venceu ou sumiu. Fica na auditoria."}
       onFechar={onFechar}
       fecharComEsc={!enviando}
       pe={
@@ -271,7 +275,7 @@ function Movimento({ tipo, itens, inicial, onFechar, onFeito }: { tipo: Mov; ite
             Cancelar
           </button>
           <button type="button" className={`btn ${tipo === "ENTRADA" ? "btn-pri" : "btn-perigo"}`} disabled={enviando} onClick={salvar}>
-            {enviando ? "Salvando…" : tipo === "ENTRADA" ? "Dar entrada" : "Registrar perda"}
+            {enviando ? "Salvando…" : tipo === "ENTRADA" ? "Dar entrada" : tipo === "CORRECAO" ? "Aplicar correção" : "Registrar perda"}
           </button>
         </>
       }
@@ -292,7 +296,7 @@ function Movimento({ tipo, itens, inicial, onFechar, onFeito }: { tipo: Mov; ite
         <div className="linha-campos">
           <label className="fld">
             <span>Quantidade ({item?.unidade_base ?? "un"})</span>
-            <input data-foco inputMode="numeric" value={qtd} onChange={(e) => setQtd(e.target.value.replace(/\D/g, ""))} />
+            <input data-foco inputMode="numeric" value={qtd} onChange={(e) => setQtd(tipo === "CORRECAO" ? e.target.value.replace(/[^0-9-]/g, "") : e.target.value.replace(/\D/g, ""))} />
           </label>
           {tipo === "ENTRADA" ? (
             <label className="fld">
@@ -305,9 +309,9 @@ function Movimento({ tipo, itens, inicial, onFechar, onFeito }: { tipo: Mov; ite
           <span>Motivo {tipo === "ENTRADA" ? "(opcional)" : ""}</span>
           <input placeholder={tipo === "ENTRADA" ? "Ex.: compra no atacado" : "Ex.: 2 latas amassadas"} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
         </label>
-        {item && n > 0 ? (
+        {item && Number.isInteger(n) && n !== 0 ? (
           <p className="muted pequeno" style={{ margin: 0 }}>
-            Saldo de {nomeItem(item)}: {item.qtd_base} → {tipo === "ENTRADA" ? item.qtd_base + n : item.qtd_base - n} {item.unidade_base}
+            Saldo de {nomeItem(item)}: {item.qtd_base} → {tipo === "PERDA" ? item.qtd_base - n : item.qtd_base + n} {item.unidade_base}
           </p>
         ) : null}
       </div>

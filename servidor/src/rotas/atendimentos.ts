@@ -75,13 +75,12 @@ export async function rotasAtendimentos(app: FastifyInstance) {
       where,
       orderBy: { aberto_em: "desc" },
       include: {
-        mesa: { select: { id: true, numero: true } },
-        usuario: { select: { id: true, nome: true } },
+        ...includeDetalhe,
         _count: { select: { pedidos: true } },
       },
       take: 200,
     });
-    return lista;
+    return Promise.all(lista.map(montarResposta));
   });
 
   app.get("/atendimentos/:id", authOps, async (req, reply) => {

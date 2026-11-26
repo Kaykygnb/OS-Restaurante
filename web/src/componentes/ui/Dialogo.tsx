@@ -30,6 +30,7 @@ export default function Dialogo({ titulo, sub, children, pe, largo, onFechar, fe
 
   useEffect(() => {
     function tecla(e: KeyboardEvent) {
+      if (caixa.current?.closest(".dlg-fundo") !== Array.from(document.querySelectorAll(".dlg-fundo")).at(-1)) return;
       if (e.key === "Escape" && fecharComEsc) {
         e.stopPropagation();
         fechar.current();
@@ -39,6 +40,19 @@ export default function Dialogo({ titulo, sub, children, pe, largo, onFechar, fe
     return () => window.removeEventListener("keydown", tecla, true);
   }, [fecharComEsc]);
 
+  useEffect(() => {
+    function teclado(e: KeyboardEvent) {
+      if (document.querySelectorAll(".dlg-fundo").length && caixa.current?.closest(".dlg-fundo") !== Array.from(document.querySelectorAll(".dlg-fundo")).at(-1)) return;
+      if (e.key === "Tab") {
+        const focaveis = Array.from(caixa.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], [tabindex="0"]') ?? []).filter(el => el.getClientRects().length);
+        const primeiro = focaveis[0]; const ultimo = focaveis.at(-1);
+        if (e.shiftKey && (document.activeElement === primeiro || !caixa.current?.contains(document.activeElement))) { e.preventDefault(); ultimo?.focus(); }
+        else if (!e.shiftKey && document.activeElement === ultimo) { e.preventDefault(); primeiro?.focus(); }
+      }
+    }
+    document.addEventListener("keydown", teclado); return () => document.removeEventListener("keydown", teclado);
+  }, []);
+
   return (
     <div className="dlg-fundo" onMouseDown={(e) => e.target === e.currentTarget && fecharComEsc && onFechar()}>
       <div ref={caixa} className={`dlg${largo ? " dlg-largo" : ""}`} role="dialog" aria-modal="true" aria-labelledby={id}>
@@ -47,7 +61,7 @@ export default function Dialogo({ titulo, sub, children, pe, largo, onFechar, fe
             <h2 id={id}>{titulo}</h2>
             {sub ? <p>{sub}</p> : null}
           </div>
-          <button type="button" className="btn btn-ic dlg-x" aria-label="Fechar" onClick={onFechar}>
+          <button type="button" className="btn btn-ic dlg-x" aria-label="Fechar" disabled={!fecharComEsc} onClick={onFechar}>
             <Icone nome="x" />
           </button>
         </div>

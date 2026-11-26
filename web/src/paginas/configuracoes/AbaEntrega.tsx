@@ -1,3 +1,7 @@
+import { lerRascunhoSeguro, useEdicaoPendente } from "../../hooks/useRascunho";
+import FormEndereco from "../clientes/FormEndereco";
+import type { EnderecoInput } from "../../servicos/contratos";
+import { geocodificar } from "../../servicos/rotas";
 import { useCallback, useEffect, useState } from "react";
 import { Carregando, ErroCarga, Faixa } from "../../componentes/ui/Estados";
 import Icone from "../../componentes/ui/Icone";
@@ -26,6 +30,15 @@ export default function AbaEntrega() {
   const [novoB, setNovoB] = useState({ nome: "", cidade: "", taxa: "" });
   const [salvando, setSalvando] = useState(false);
 
+  const [endereco, setEndereco] = useState<EnderecoInput>({ logradouro: "", numero: "", bairro: "", cidade: "", uf: "", cep: "", sem_numero: false });
+  const [localizando, setLocalizando] = useState(false);
+  const marcarSalvo = useEdicaoPendente("config:entrega", { faixas, raio, fator, padrao, lat, lng, endereco }, !!cfg);
+  async function localizar() {
+    if (!endereco.logradouro || !endereco.bairro || !endereco.cidade || !endereco.uf) return avisar("Preencha rua, bairro, cidade e UF para localizar o restaurante.", "err");
+    setLocalizando(true);
+    try { const r = await geocodificar({ ...endereco, numero: endereco.numero ?? undefined }); setLat(String(r.lat)); setLng(String(r.lng)); avisar(`Localização encontrada por ${r.precisao}. Confira o endereço e salve as regras.`, "ok"); }
+    catch (e) { avisar((e as Error).message, "err"); } finally { setLocalizando(false); }
+  }
   const carregar = useCallback(() => {
     Promise.all([lerConfigEntrega(), listarBairros()])
       .then(([c, b]) => {
@@ -38,6 +51,9 @@ export default function AbaEntrega() {
         setPadrao(reais(c.taxa_entrega_centavos));
         setLat(c.lat != null ? String(c.lat) : "");
         setLng(c.lng != null ? String(c.lng) : "");
+        if (c.endereco_origem) { try { setEndereco(JSON.parse(c.endereco_origem)); } catch { /* endereço antigo em texto */ } }
+        const r = lerRascunhoSeguro<{ faixas: { ate: string; taxa: string }[]; raio: string; fator: string; padrao: string; lat: string; lng: string; endereco: EnderecoInput }>("config:entrega");
+        if (r) { setFaixas(r.faixas); setRaio(r.raio); setFator(r.fator); setPadrao(r.padrao); setLat(r.lat); setLng(r.lng); setEndereco(r.endereco); }
       })
       .catch((e: ApiErro) => setErro(e.message));
   }, []);
@@ -57,13 +73,14 @@ export default function AbaEntrega() {
       await salvarConfigEntrega({
         lat: lat.trim() ? Number(lat.replace(",", ".")) : null,
         lng: lng.trim() ? Number(lng.replace(",", ".")) : null,
-        endereco_origem: cfg.endereco_origem ?? null,
+        endereco_origem: endereco.logradouro ? JSON.stringify(endereco) : cfg.endereco_origem ?? null,
         entrega_raio_max_m: paraM(raio),
         entrega_modo_distancia: "linha_reta",
         entrega_fator_rota: f,
         taxa_entrega_centavos: reaisParaCentavos(padrao || "0"),
         faixas: lista,
       });
+      marcarSalvo();
       avisar("Regras de entrega salvas.", "ok");
       carregar();
     } catch (e) {
@@ -101,26 +118,16 @@ export default function AbaEntrega() {
       </Faixa>
       <section className="cartao pilha">
         <h3>Ponto de saída e limites</h3>
-        <div className="linha-campos">
-          <label className="fld">
-            <span>Latitude do restaurante</span>
-            <input inputMode="decimal" placeholder="-23,5505" value={lat} onChange={(e) => setLat(e.target.value)} />
-          </label>
-          <label className="fld">
-            <span>Longitude</span>
-            <input inputMode="decimal" placeholder="-46,6333" value={lng} onChange={(e) => setLng(e.target.value)} />
-            <span className="dica">No Google Maps, toque e segure no restaurante para copiar.</span>
-          </label>
-          <label className="fld">
-            <span>Entrega até (km)</span>
-            <input inputMode="decimal" placeholder="Sem limite" value={raio} onChange={(e) => setRaio(e.target.value)} />
-          </label>
-          <label className="fld">
-            <span>Fator da rota (×)</span>
-            <input inputMode="decimal" value={fator} onChange={(e) => setFator(e.target.value)} />
-            <span className="dica">1,30 = a rua é 30% mais longa que a linha reta.</span>
-          </label>
-        </div>
+        <p>Busque o CEP, complete o endereço e localize o ponto de saída das entregas.</p>
+        <FormEndereco valor={endereco} onMudar={setEndereco} />
+        <button type="button" className="btn" disabled={localizando} onClick={localizar}>{localizando ? "Localizando…" : "Localizar restaurante"}</button>
+        {lat && lng ? <p role="status">Ponto de saída localizado. Salve as regras para aplicar.</p> : null}
+        <label className="fld"><span>Entrega até (km)</span><input inputMode="decimal" placeholder="Sem limite" value={raio} onChange={e => setRaio(e.target.value)} /></label>
+        <details><summary>Opções avançadas de distância</summary><div className="linha-campos">
+          <label className="fld"><span>Latitude</span><input inputMode="decimal" value={lat} onChange={e => setLat(e.target.value)} /></label>
+          <label className="fld"><span>Longitude</span><input inputMode="decimal" value={lng} onChange={e => setLng(e.target.value)} /></label>
+          <label className="fld"><span>Fator da rota</span><input inputMode="decimal" value={fator} onChange={e => setFator(e.target.value)} /><span className="dica">1,30 estima um trajeto 30% maior que a distância em linha reta.</span></label>
+        </div></details>
       </section>
       <section className="cartao pilha">
         <h3>Faixas de distância</h3>

@@ -1,3 +1,4 @@
+import { podeTrocarEdicao } from "../hooks/useRascunho";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Ajuda from "../componentes/Ajuda";
 import { api } from "../servicos/api";
@@ -43,15 +44,15 @@ export default function Cardapio() {
     };
   }, [categorias]);
 
-  function setErroLimpo(msg: string) {
+  const setErroLimpo = useCallback((msg: string) => {
     setOk("");
     setErro(msg);
-  }
+  }, []);
 
-  function setOkLimpo(msg: string) {
+  const setOkLimpo = useCallback((msg: string) => {
     setErro("");
     setOk(msg);
-  }
+  }, []);
 
   return (
     <div className="cardapio">
@@ -60,8 +61,8 @@ export default function Cardapio() {
           <span className="cardapio-kicker">GESTÃO DO RESTAURANTE</span>
           <h2 id="cardapio-titulo">Seu cardápio, em ordem.</h2>
           <p>
-            Produto e preços aqui; opcionais (molho, sabores) no editar do item. Adicionais (bacon,
-            queijo…) na outra aba, por categoria.
+            Cadastre dados, tamanhos, preços e escolhas do produto em um único editor.
+            Extras como bacon e queijo ficam em Adicionais da categoria.
             <Ajuda
               texto="Opcionais = o que o cliente escolhe no próprio item (ex.: molho do macarrão). Adicionais = extras da categoria (ex.: bacon em pastéis)."
             />
@@ -94,19 +95,19 @@ export default function Cardapio() {
       </section>
 
       <nav className="cardapio-tabs" aria-label="Seções do cardápio">
-        <button type="button" className={`cardapio-tab${aba === "produtos" ? " ativa" : ""}`} onClick={() => setAba("produtos")} aria-current={aba === "produtos" ? "page" : undefined}>
+        <button type="button" className={`cardapio-tab${aba === "produtos" ? " ativa" : ""}`} onClick={async () => { if (await podeTrocarEdicao()) setAba("produtos"); }} aria-current={aba === "produtos" ? "page" : undefined}>
           {/* Sem <Ajuda> aqui: botão dentro de botão é HTML inválido e o toque no "i" trocava de aba. */}
-          <span className="titulo-com-ajuda" title="Cadastre o item, as opções de preço (P/M/G) e, depois de salvar, os opcionais do pedido.">
+          <span className="titulo-com-ajuda" title="Cadastre dados, preços e escolhas antes de salvar o produto.">
             Produtos
           </span>
           <span className="tab-contagem">{resumo.produtos}</span>
         </button>
-        <button type="button" className={`cardapio-tab${aba === "adicionais" ? " ativa" : ""}`} onClick={() => setAba("adicionais")} aria-current={aba === "adicionais" ? "page" : undefined}>
+        <button type="button" className={`cardapio-tab${aba === "adicionais" ? " ativa" : ""}`} onClick={async () => { if (await podeTrocarEdicao()) setAba("adicionais"); }} aria-current={aba === "adicionais" ? "page" : undefined}>
           <span
             className="titulo-com-ajuda"
             title="Grupos ligados a categorias. Ex.: grupo Proteínas na categoria Pastéis aparece em todos os pastéis, menos os que você excluir."
           >
-            Adicionais
+            Adicionais da categoria
           </span>
           <span className="tab-subtitulo">Grupos e complementos</span>
         </button>

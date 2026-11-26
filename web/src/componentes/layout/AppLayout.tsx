@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { temEdicaoPendente } from "../../hooks/useRascunho";
+import { confirmar } from "../../servicos/dialogos";
+import { Fragment, useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { barraInferior, itensDoPerfil, tituloDaRota } from "../../auth/navegacao";
 import { lerUsuario, podeOperarCaixa, sair } from "../../auth/sessao";
@@ -42,13 +44,15 @@ export default function AppLayout() {
     return () => window.removeEventListener("keydown", tecla);
   }, [itens, navegar]);
 
-  function trocarUsuario() {
+  async function trocarUsuario() {
+    if (temEdicaoPendente() && !await confirmar("Sair da sessão e descartar os rascunhos não salvos?", true)) return;
     sair();
     navegar("/login", { replace: true });
   }
 
   const ativo = (to: string) => (to === "/painel" ? pathname === "/painel" : pathname === to || pathname.startsWith(to + "/"));
 
+  const grupo = (to: string) => ["/painel", "/painel/venda", "/painel/mesas", "/painel/balcao", "/painel/delivery", "/painel/pedidos", "/painel/caixa"].includes(to) ? "Atendimento" : ["/painel/usuarios", "/painel/configuracoes", "/painel/conectar", "/painel/aparelho"].includes(to) ? "Configurações" : "Gestão";
   return (
     <div className="app">
       <aside className="lateral" aria-label="Menu">
@@ -57,12 +61,13 @@ export default function AppLayout() {
           <small>operação do dia</small>
         </div>
         <nav>
-          {itens.map((i) => (
+          {itens.map((i, indice) => (
+            <Fragment key={i.to}>{(indice === 0 || grupo(itens[indice-1].to) !== grupo(i.to)) ? <span className="nav-grupo">{grupo(i.to)}</span> : null}
             <NavLink key={i.to} to={i.to} end={i.to === "/painel"} className={() => `nav-link${ativo(i.to) ? " ativo" : ""}`}>
               <Icone nome={i.icone} />
               <span>{i.rotulo}</span>
               {i.atalho ? <span className="nav-atalho">{i.atalho}</span> : null}
-            </NavLink>
+            </NavLink></Fragment>
           ))}
         </nav>
         <div className="lateral-pe">

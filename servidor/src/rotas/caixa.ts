@@ -59,10 +59,14 @@ export async function rotasCaixa(app: FastifyInstance) {
     if (!s) return reply.code(409).send({ erro: "O caixa está fechado.", codigo: "caixa_fechado" });
     const gestor = ehGestor((req.user as any).tipo);
     const formas = apresentarFormas(await esperadoPorForma(s.id), gestor, false);
+    const movimentos = gestor ? await prisma.movimentacao_caixa.findMany({ where: { caixa_sessao_id: s.id } }) : [];
+    const pagamentos = gestor ? await prisma.pagamento.aggregate({ where: { caixa_sessao_id: s.id, estornado_em: null }, _sum: { valor_centavos: true } }) : null;
+    const composicao = gestor ? { fundo_centavos: s.fundo_troco_centavos, recebimentos_centavos: pagamentos?._sum.valor_centavos ?? 0, suprimentos_centavos: movimentos.filter(m => m.tipo === "SUPRIMENTO").reduce((t,m) => t+m.valor_centavos,0), sangrias_centavos: movimentos.filter(m => m.tipo === "SANGRIA").reduce((t,m) => t+m.valor_centavos,0) } : undefined;
     return {
       sessao_id: s.id,
       sessao_anterior: sessaoDeOutroDia(s.aberto_em),
       formas,
+      ...(composicao ? { composicao } : {}),
     };
   });
 

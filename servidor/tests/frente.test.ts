@@ -6,18 +6,21 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import bcrypt from "bcryptjs";
 import { montarHarness, abrirContaComItem, type Harness } from "./helpers/harness.js";
-import { totalAtendimentoAberto } from "../src/operacao/totais.js";
+let totalAtendimentoAberto: typeof import("../src/operacao/totais.js").totalAtendimentoAberto;
 import { montarCupomProducao, encoderTexto } from "../src/impressao/escpos.js";
 import { quebrarColunas } from "../src/util/texto.js";
 import { assinar, publicar } from "../src/eventos/barramento.js";
 import { portaConfigurada } from "../src/rede/enderecos.js";
 import { nomeAdicionalCupom } from "../src/util/texto.js";
-import { enfileirarTrabalho, processarFilaImpressao } from "../src/impressao/fila.js";
+let enfileirarTrabalho: typeof import("../src/impressao/fila.js").enfileirarTrabalho;
+let processarFilaImpressao: typeof import("../src/impressao/fila.js").processarFilaImpressao;
 
 let h: Harness;
 
 before(async () => {
   h = await montarHarness();
+  ({ totalAtendimentoAberto } = await import("../src/operacao/totais.js"));
+  ({ enfileirarTrabalho, processarFilaImpressao } = await import("../src/impressao/fila.js"));
 });
 
 after(async () => {

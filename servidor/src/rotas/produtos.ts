@@ -238,6 +238,21 @@ export async function rotasProdutos(app: FastifyInstance) {
   });
 
   // Edita só dados do produto (sem preço)
+  app.patch("/produtos/:id", authGestao, async (req, reply) => {
+    const id = Number((req.params as any).id);
+    const body = req.body as { esgotado?: boolean };
+    if (!Number.isSafeInteger(id) || typeof body.esgotado !== "boolean") return reply.code(400).send({ erro: "Informe produto e estado de esgotado válidos" });
+    const atual = await prisma.produto.findUnique({ where: { id } });
+    if (!atual) return reply.code(404).send({ erro: "Produto não encontrado" });
+    const produto = await prisma.produto.update({ where: { id }, data: {
+      esgotado: body.esgotado,
+      esgotado_em: body.esgotado ? new Date() : null,
+      esgotado_por_id: body.esgotado ? Number((req.user as any).id) : null,
+      esgotado_origem: body.esgotado ? "manual" : null,
+    } });
+    return produto;
+  });
+
   app.put("/produtos/:id", authGestao, async (req, reply) => {
     const id = Number((req.params as any).id);
     if (!Number.isFinite(id)) return reply.code(400).send({ erro: "ID inválido" });

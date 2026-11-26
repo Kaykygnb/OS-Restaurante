@@ -1,3 +1,4 @@
+import { rotasCadastroProduto } from "./rotas/cadastro-produto.js";
 import Fastify from "fastify";
 import jwt from "@fastify/jwt";
 import rateLimit from "@fastify/rate-limit";
@@ -64,6 +65,7 @@ async function saude() {
 async function registrarApi(app: FastifyInstance) {
   await app.register(rotasAuth);
   await app.register(rotasCategorias);
+  await app.register(rotasCadastroProduto);
   await app.register(rotasProdutos);
   await app.register(rotasCardapio);
   await app.register(rotasAdicionais);

@@ -22,7 +22,7 @@ const STATUS_PEDIDO: Record<string, string> = {
 };
 
 const PERFIL: Record<string, string> = {
-  ROOT: "Root",
+  ROOT: "Suporte",
   ADMIN: "Administrador",
   GERENTE: "Gerente",
   ATENDENTE: "Atendente",

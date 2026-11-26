@@ -27,6 +27,8 @@ export const ROTULO_EVENTO: Record<string, string> = {
   "estoque.esgotados_resetados": "Esgotados voltaram",
   "impressao.reimpressao": "Reimprimiu",
   "item.cancelado": "Cancelou item",
+  "login.ok": "Entrou no sistema",
+  "login.saiu": "Saiu do sistema",
   "login.falhou": "Login errado",
   "login.fora_do_horario": "Entrou fora do horário",
   "pagamento.estornado": "Estornou pagamento",

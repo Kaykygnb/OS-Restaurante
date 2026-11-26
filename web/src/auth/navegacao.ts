@@ -27,8 +27,10 @@ export const ITENS_NAV: ItemNav[] = [
   { to: "/painel/caixa", rotulo: "Caixa", icone: "caixa", atalho: "F8", perfis: OPS, caixa: true },
   { to: "/painel/clientes", rotulo: "Clientes", icone: "clientes", perfis: OPS },
   { to: "/painel/cardapio", rotulo: "Cardápio", icone: "cardapio", perfis: GESTAO },
-  { to: "/painel/promocoes", rotulo: "Promoções", icone: "promo", perfis: GESTAO, modulo: (m) => m.promocoes },
+  { to: "/painel/promocoes", rotulo: "Promoções", icone: "promo", perfis: GESTAO },
   { to: "/painel/estoque", rotulo: "Estoque", icone: "estoque", perfis: GESTAO },
+  { to: "/painel/impressao", rotulo: "Fila de impressão", icone: "impressora", perfis: OPS },
+  { to: "/painel/cadastro-mesas", rotulo: "Cadastro de mesas", icone: "mesas", perfis: GESTAO },
   { to: "/painel/relatorios", rotulo: "Relatórios", icone: "relatorio", perfis: GESTAO },
   { to: "/painel/auditoria", rotulo: "Auditoria", icone: "auditoria", perfis: GESTAO },
   { to: "/painel/usuarios", rotulo: "Usuários", icone: "usuarios", perfis: GESTAO },
@@ -51,6 +53,8 @@ export function barraInferior(itens: ItemNav[]): { fixos: ItemNav[]; mais: ItemN
 /** Título e caminho do topo de cada tela. */
 export function tituloDaRota(pathname: string): { titulo: string; caminho?: string } {
   const exato: Record<string, { titulo: string; caminho?: string }> = {
+    "/painel/cadastro-mesas": { titulo: "Cadastro de mesas" },
+    "/painel/impressao": { titulo: "Fila de impressão" },
     "/painel": { titulo: "Início", caminho: "Resumo de hoje" },
     "/painel/venda": { titulo: "Venda rápida", caminho: "Escolhe, cobra e pronto · digite o nome ou o número do atalho" },
     "/painel/balcao": { titulo: "Balcão", caminho: "Pedido para levar · vai para a cozinha · paga agora ou na retirada" },
