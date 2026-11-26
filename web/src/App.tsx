@@ -11,7 +11,14 @@ import Painel from "./paginas/Painel";
 import Pedidos from "./paginas/Pedidos";
 import Pdv from "./paginas/Pdv";
 import Usuarios from "./paginas/Usuarios";
-import { estaLogado } from "./auth/sessao";
+import { estaLogado, sair, telaInicial, lerUsuario } from "./auth/sessao";
+import { registrarAoExpirarSessao } from "./servicos/api";
+
+// 401 em qualquer tela (sessão vencida, usuário desativado): volta ao login em vez de ficar com erros soltos.
+registrarAoExpirarSessao(() => {
+  sair();
+  if (!location.pathname.startsWith("/login")) location.assign("/login?expirou=1");
+});
 
 export default function App() {
   return (
@@ -19,7 +26,7 @@ export default function App() {
       <Routes>
         <Route
           path="/login"
-          element={estaLogado() ? <Navigate to="/painel" replace /> : <Login />}
+          element={estaLogado() ? <Navigate to={telaInicial(lerUsuario()?.tipo)} replace /> : <Login />}
         />
 
         <Route element={<RotaProtegida />}>
