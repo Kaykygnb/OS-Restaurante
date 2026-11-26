@@ -2,7 +2,19 @@ export type UsuarioSessao = {
   id: number;
   nome: string;
   tipo: string;
+  /** Permissão por usuário (decisão do grupo, 26/11): recebe, abre/fecha caixa e usa a venda rápida. */
+  pode_operar_caixa?: boolean;
 };
+
+/**
+ * Quem pode receber e operar o caixa. Enquanto o servidor não manda `pode_operar_caixa`
+ * (PENDENCIAS-CONTRATO.md), gerente para cima pode e os outros não.
+ */
+export function podeOperarCaixa(u: UsuarioSessao | null = lerUsuario()): boolean {
+  if (!u) return false;
+  if (typeof u.pode_operar_caixa === "boolean") return u.pode_operar_caixa;
+  return ["ROOT", "ADMIN", "GERENTE"].includes(u.tipo);
+}
 
 export function lerToken(): string | null {
   return localStorage.getItem("token");
@@ -27,10 +39,9 @@ export function sair(): void {
   localStorage.removeItem("usuario");
 }
 
-/** Tela inicial de cada perfil: o garçom cai nas Mesas, a cozinha na fila. */
+/** Tela inicial de cada perfil: a cozinha cai direto na fila; os outros no Início do perfil (03a–03c). */
 export function telaInicial(tipo?: string | null): string {
-  if (tipo === "COZINHEIRO") return "/painel/pedidos?aba=cozinha";
-  if (tipo === "ATENDENTE") return "/painel/mesas";
+  if (tipo === "COZINHEIRO") return "/painel/pedidos";
   return "/painel";
 }
 
