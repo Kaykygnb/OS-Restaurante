@@ -59,16 +59,19 @@ export async function enfileirarDocumentoNegocio(opts: {
         });
         trabalhos.push(r.trabalho_id);
       } catch (err) {
-        const t = await enfileirarTrabalho({
-          impressora_id: impressora.id,
-          tipo_documento: opts.tipo,
-          conteudo: opts.payload,
-          atendimento_id: opts.atendimento_id ?? null,
-          pedido_id: opts.pedido_id ?? null,
-          via_numero: via,
-        });
-        trabalhos.push(t.id);
-        avisos.push(err instanceof Error ? err.message : "Falha na impressão imediata — na fila");
+        const msg = err instanceof Error ? err.message : "Falha na impressão imediata — na fila";
+        if (msg === "Impressora inativa") {
+          const t = await enfileirarTrabalho({
+            impressora_id: impressora.id,
+            tipo_documento: opts.tipo,
+            conteudo: opts.payload,
+            atendimento_id: opts.atendimento_id ?? null,
+            pedido_id: opts.pedido_id ?? null,
+            via_numero: via,
+          });
+          trabalhos.push(t.id);
+        }
+        avisos.push(msg);
       }
     } else {
       const t = await enfileirarTrabalho({
@@ -86,14 +89,17 @@ export async function enfileirarDocumentoNegocio(opts: {
   if (opts.abrir_gaveta && cfg?.abre_gaveta && impressora.tem_gaveta) {
     try {
       await imprimirAgora(impressora, "COMPROVANTE", documentoGaveta());
-    } catch {
-      await enfileirarTrabalho({
-        impressora_id: impressora.id,
-        tipo_documento: "COMPROVANTE",
-        conteudo: documentoGaveta(),
-        atendimento_id: opts.atendimento_id ?? null,
-        via_numero: 1,
-      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg === "Impressora inativa") {
+        await enfileirarTrabalho({
+          impressora_id: impressora.id,
+          tipo_documento: "COMPROVANTE",
+          conteudo: documentoGaveta(),
+          atendimento_id: opts.atendimento_id ?? null,
+          via_numero: 1,
+        });
+      }
       avisos.push("Gaveta enfileirada (falha imediata)");
     }
   }

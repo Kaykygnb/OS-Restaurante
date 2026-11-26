@@ -2,8 +2,10 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 type ConsultaUsuarios = {
   usuario: {
-    findUnique(args: { where: { id: number }; select: { id: true; ativo: true; tipo_usuario: true } }):
-      PromiseLike<{ id: number; ativo: boolean; tipo_usuario: string } | null>;
+    findUnique(args: {
+      where: { id: number };
+      select: { id: true; ativo: true; tipo_usuario: true; pode_operar_caixa: true };
+    }): PromiseLike<{ id: number; ativo: boolean; tipo_usuario: string; pode_operar_caixa: boolean } | null>;
   };
 };
 
@@ -22,11 +24,16 @@ export function criarAutenticador(db: ConsultaUsuarios) {
     }
     const usuario = await db.usuario.findUnique({
       where: { id },
-      select: { id: true, ativo: true, tipo_usuario: true },
+      select: { id: true, ativo: true, tipo_usuario: true, pode_operar_caixa: true },
     });
     if (!usuario?.ativo) {
       return reply.code(401).send({ erro: "Usuário indisponível. Faça login novamente" });
     }
-    req.user = { ...claims, id: usuario.id, tipo: usuario.tipo_usuario };
+    req.user = {
+      ...claims,
+      id: usuario.id,
+      tipo: usuario.tipo_usuario,
+      pode_operar_caixa: usuario.pode_operar_caixa,
+    };
   };
 }

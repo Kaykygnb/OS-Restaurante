@@ -16,9 +16,12 @@ export function pagoEfetivoCentavos(
 
 export async function calcularTotaisAtendimento(at: {
   desconto_centavos: number;
+  desconto_tipo?: string | null;
+  desconto_percentual?: number | null;
   acrescimo_centavos: number;
   taxa_servico_aplicada: boolean;
   taxa_entrega_centavos: number;
+  tipo_atendimento?: string | null;
   pedidos: { itens: ItemTotavel[] }[];
   pagamentos: { valor_centavos: number; estornado_em?: Date | null }[];
 }) {
@@ -28,10 +31,13 @@ export async function calcularTotaisAtendimento(at: {
   return totalAtendimentoAberto({
     itens,
     desconto_centavos: at.desconto_centavos,
+    desconto_tipo: at.desconto_tipo ?? null,
+    desconto_percentual: at.desconto_percentual ?? null,
     acrescimo_centavos: at.acrescimo_centavos,
     taxa_servico_aplicada: at.taxa_servico_aplicada,
     taxa_servico_percentual: pct,
     taxa_entrega_centavos: at.taxa_entrega_centavos,
+    tipo_atendimento: at.tipo_atendimento ?? null,
     pago_centavos: pago,
   });
 }

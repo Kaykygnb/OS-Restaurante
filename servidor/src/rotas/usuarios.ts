@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "../db.js";
 import {
   ehTipoUsuario,
+  padraoPodeOperarCaixa,
   podeCriarTipo,
   soTipos,
   tiposCriaveis,
@@ -18,6 +19,7 @@ const SEM_SENHA = {
   email: true,
   telefone: true,
   ativo: true,
+  pode_operar_caixa: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -86,6 +88,7 @@ export async function rotasUsuarios(app: FastifyInstance) {
       email?: string;
       telefone?: string;
       matricula?: string;
+      pode_operar_caixa?: boolean;
     };
 
     const nome = body.nome?.trim();
@@ -123,6 +126,10 @@ export async function rotasUsuarios(app: FastifyInstance) {
         email,
         telefone: limparOpcional(body.telefone),
         matricula,
+        pode_operar_caixa:
+          (quem === "ADMIN" || quem === "ROOT") && body.pode_operar_caixa !== undefined
+            ? Boolean(body.pode_operar_caixa)
+            : padraoPodeOperarCaixa(tipo),
       },
       select: SEM_SENHA,
     });
@@ -152,6 +159,7 @@ export async function rotasUsuarios(app: FastifyInstance) {
       matricula?: string | null;
       tipo_usuario?: TipoUsuario;
       ativo?: boolean;
+      pode_operar_caixa?: boolean;
     };
 
     const data: Record<string, unknown> = {};
@@ -174,6 +182,10 @@ export async function rotasUsuarios(app: FastifyInstance) {
         return reply.code(403).send({ erro: `Você não pode definir o tipo ${body.tipo_usuario}` });
       }
       data.tipo_usuario = body.tipo_usuario;
+    }
+
+    if (body.pode_operar_caixa !== undefined) {
+      data.pode_operar_caixa = Boolean(body.pode_operar_caixa);
     }
 
     if (body.ativo !== undefined) {
@@ -201,6 +213,43 @@ export async function rotasUsuarios(app: FastifyInstance) {
       where: { id },
       data,
       select: SEM_SENHA,
+    });
+  });
+
+  app.patch("/usuarios/:id", authGestao, async (req, reply) => {
+    const quem = (req as any).user.tipo as TipoUsuario;
+    const id = Number((req.params as any).id);
+    if (!Number.isFinite(id)) return reply.code(400).send({ erro: "ID inválido", codigo: "id_invalido" });
+    const alvo = await prisma.usuario.findUnique({ where: { id } });
+    if (!alvo) return reply.code(404).send({ erro: "Usuário não encontrado", codigo: "nao_encontrado" });
+    if (alvo.tipo_usuario === "ROOT") {
+      return reply.code(403).send({ erro: "Não é possível editar o ROOT por esta rota", codigo: "sem_permissao" });
+    }
+    if (!podeCriarTipo(quem, alvo.tipo_usuario as TipoUsuario) && quem !== "ROOT") {
+      return reply.code(403).send({ erro: "Sem permissão para editar este usuário", codigo: "sem_permissao" });
+    }
+    const body = (req.body ?? {}) as { pode_operar_caixa?: boolean };
+    if (body.pode_operar_caixa === undefined) {
+      return reply.code(400).send({ erro: "Nada para alterar.", codigo: "dados_invalidos" });
+    }
+    return prisma.usuario.update({
+      where: { id },
+      data: { pode_operar_caixa: Boolean(body.pode_operar_caixa) },
+      select: SEM_SENHA,
+    });
+  });
+
+  app.get("/aprovadores", {
+    onRequest: [(app as any).autenticar, soTipos("ROOT", "ADMIN", "GERENTE", "ATENDENTE")],
+  }, async () => {
+    return prisma.usuario.findMany({
+      where: {
+        ativo: true,
+        pin_hash: { not: null },
+        tipo_usuario: { in: ["ROOT", "ADMIN", "GERENTE"] },
+      },
+      select: { id: true, nome: true },
+      orderBy: { nome: "asc" },
     });
   });
 

@@ -1,6 +1,17 @@
 import { prisma } from "../db.js";
+import { publicar } from "../eventos/barramento.js";
 import { imprimirRede } from "./rede.js";
 import { imprimirSistema } from "./sistema.js";
+
+function papelImpressora(status: string | null | undefined) {
+  if (status === "ONLINE") return "ok";
+  if (status === "ERRO") return "erro";
+  return "sem_resposta";
+}
+
+function avisarImpressora(id: number, antes: string | null | undefined, depois: "ONLINE" | "ERRO") {
+  if (papelImpressora(antes) !== papelImpressora(depois)) publicar("impressora.status", id);
+}
 
 const MAX_TENTATIVAS = 5;
 /** Espera crescente: 2s, 10s, 30s, 1min, 5min */
@@ -8,6 +19,12 @@ const BACKOFF_MS = [2_000, 10_000, 30_000, 60_000, 300_000];
 
 let rodando = false;
 let timer: NodeJS.Timeout | null = null;
+
+function timeoutRedeMs() {
+  const n = Number(process.env.IMPRESSAO_TIMEOUT_MS);
+  if (Number.isFinite(n) && n >= 200 && n <= 60_000) return n;
+  return 8000;
+}
 
 async function enviarParaImpressora(
   impressora: {
@@ -20,7 +37,7 @@ async function enviarParaImpressora(
 ) {
   if (impressora.tipo_conexao === "REDE") {
     if (!impressora.ip) throw new Error("Impressora de rede sem IP");
-    await imprimirRede(impressora.ip, impressora.porta || 9100, dados);
+    await imprimirRede(impressora.ip, impressora.porta || 9100, dados, timeoutRedeMs());
     return;
   }
   if (!impressora.nome_sistema) throw new Error("Impressora de sistema sem nome_sistema");
@@ -43,13 +60,17 @@ export async function recuperarTrabalhosPresos() {
   }
 }
 
-async function processarUm() {
+async function processarUm(impressoraId?: number, trabalhoId?: number) {
   const agora = new Date();
   const trabalho = await prisma.trabalho_impressao.findFirst({
     where: {
+      ...(trabalhoId ? { id: trabalhoId } : {}),
+      ...(impressoraId ? { impressora_id: impressoraId } : {}),
       status: { in: ["PENDENTE", "ERRO"] },
       tentativas: { lt: MAX_TENTATIVAS },
-      OR: [{ proxima_tentativa_em: null }, { proxima_tentativa_em: { lte: agora } }],
+      ...(trabalhoId
+        ? {}
+        : { OR: [{ proxima_tentativa_em: null }, { proxima_tentativa_em: { lte: agora } }] }),
     },
     orderBy: { criado_em: "asc" },
     include: { impressora: true },
@@ -68,10 +89,11 @@ async function processarUm() {
     return true;
   }
 
-  await prisma.trabalho_impressao.update({
-    where: { id: trabalho.id },
+  const travou = await prisma.trabalho_impressao.updateMany({
+    where: { id: trabalho.id, status: { in: ["PENDENTE", "ERRO"] } },
     data: { status: "IMPRIMINDO" },
   });
+  if (travou.count !== 1) return false;
 
   try {
     const bytes = Buffer.from(trabalho.conteudo);
@@ -98,6 +120,7 @@ async function processarUm() {
         },
       }),
     ]);
+    avisarImpressora(trabalho.impressora_id, trabalho.impressora.ultimo_status, "ONLINE");
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Erro ao imprimir";
     const tentativas = trabalho.tentativas + 1;
@@ -121,6 +144,7 @@ async function processarUm() {
         },
       }),
     ]);
+    avisarImpressora(trabalho.impressora_id, trabalho.impressora.ultimo_status, "ERRO");
   }
 
   return true;
@@ -130,15 +154,28 @@ async function tick() {
   if (rodando) return;
   rodando = true;
   try {
-    for (let i = 0; i < 3; i++) {
-      const houve = await processarUm();
-      if (!houve) break;
+    const impressoras = await prisma.impressora.findMany({
+      where: { ativo: true },
+      select: { id: true },
+    });
+    for (const impressora of impressoras) {
+      await processarUm(impressora.id);
     }
   } catch (err) {
     console.error("[fila-impressao]", err);
   } finally {
     rodando = false;
   }
+}
+
+/** Uma passada da fila. Usado no boot do intervalo e nos testes. */
+export async function processarFilaImpressao() {
+  await tick();
+}
+
+/** Tenta o trabalho agora. Falha de rede deixa status ERRO e a próxima tentativa na fila. */
+export async function tentarEnviarTrabalho(id: number) {
+  return processarUm(undefined, id);
 }
 
 export function iniciarFilaImpressao(intervaloMs = 2000) {
@@ -200,6 +237,10 @@ export async function imprimirAgora(
   conteudo: Buffer
 ) {
   if (!impressora.ativo) throw new Error("Impressora inativa");
+  const antes = await prisma.impressora.findUnique({
+    where: { id: impressora.id },
+    select: { ultimo_status: true },
+  });
 
   const trabalho = await enfileirarTrabalho({
     impressora_id: impressora.id,
@@ -228,6 +269,7 @@ export async function imprimirAgora(
         },
       }),
     ]);
+    avisarImpressora(impressora.id, antes?.ultimo_status, "ONLINE");
     return { trabalho_id: trabalho.id, ok: true as const };
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Erro ao imprimir";
@@ -250,6 +292,7 @@ export async function imprimirAgora(
         },
       }),
     ]);
+    avisarImpressora(impressora.id, antes?.ultimo_status, "ERRO");
     throw new Error(msg);
   }
 }

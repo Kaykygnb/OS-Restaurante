@@ -22,3 +22,30 @@ export async function validarPinGerente(
 export function tipoPodeAprovarSemPin(tipo: TipoUsuario) {
   return APROVA.has(tipo);
 }
+
+export async function exigirAprovacao(opts: {
+  tipo: TipoUsuario;
+  usuarioId: number;
+  pin?: string | null | undefined;
+  aprovadorId?: number | null | undefined;
+  acimaDoLimite: boolean;
+  acao: string;
+}) {
+  if (!opts.acimaDoLimite || tipoPodeAprovarSemPin(opts.tipo)) {
+    return { aprovadorId: opts.usuarioId, comPin: false };
+  }
+  const aprov = await validarPinGerente(opts.pin, opts.aprovadorId);
+  if (!aprov) {
+    const { registrarNegado } = await import("./auditoria.js");
+    await registrarNegado({
+      tipo: "pin.falhou",
+      sensivel: true,
+      usuario_id: opts.usuarioId,
+      aprovador_id: opts.aprovadorId ?? null,
+      codigo_erro: "pin_invalido",
+      motivo: opts.acao,
+    });
+    return null;
+  }
+  return { aprovadorId: aprov.id, comPin: true };
+}

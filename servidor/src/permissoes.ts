@@ -38,6 +38,26 @@ export function ehTipoUsuario(v: unknown): v is TipoUsuario {
   );
 }
 
+export function padraoPodeOperarCaixa(tipo: TipoUsuario) {
+  return tipo === "ROOT" || tipo === "ADMIN" || tipo === "GERENTE";
+}
+
+export function ehGestor(tipo: string | undefined) {
+  return tipo === "ROOT" || tipo === "ADMIN" || tipo === "GERENTE";
+}
+
+/** Quem não tem a chave não recebe, não fecha conta, não faz venda rápida e não opera o caixa. */
+export function exigirCaixa() {
+  return async (req: any, reply: any) => {
+    if (!req.user?.pode_operar_caixa) {
+      return reply.code(403).send({
+        erro: "Sem permissão para operar o caixa.",
+        codigo: "sem_permissao_caixa",
+      });
+    }
+  };
+}
+
 /** Handler Fastify: exige que o JWT tenha um dos tipos informados. Usar depois de autenticar. */
 export function soTipos(...tipos: TipoUsuario[]) {
   return async (req: any, reply: any) => {

@@ -46,6 +46,7 @@ export async function montarHarness(): Promise<Harness> {
       tipo_usuario: "ADMIN",
       senha_hash,
       pin_hash: await bcrypt.hash("1234", 4),
+      pode_operar_caixa: true,
     },
   });
 
@@ -66,14 +67,14 @@ export async function montarHarness(): Promise<Harness> {
 
   const mesa = await prisma.mesa.create({ data: { numero: 99 } });
   const pix = await prisma.forma_pagamento.create({
-    data: { nome: `Pix_${Date.now()}`, abre_gaveta: false, ordem: 1 },
+    data: { nome: `Pix_${Date.now()}`, abre_gaveta: false, eh_dinheiro: false, ordem: 1 },
   });
   const din = await prisma.forma_pagamento.create({
-    data: { nome: `Din_${Date.now()}`, abre_gaveta: true, ordem: 2 },
+    data: { nome: `Din_${Date.now()}`, abre_gaveta: true, eh_dinheiro: true, ordem: 2 },
   });
 
   await prisma.caixa_sessao.create({
-    data: { usuario_abertura_id: usuario.id, fundo_troco_centavos: 0 },
+    data: { usuario_abertura_id: usuario.id, fundo_troco_centavos: 0, aberta: true },
   });
 
   const cat = await prisma.categoria.create({ data: { nome: `Cat_${Date.now()}` } });

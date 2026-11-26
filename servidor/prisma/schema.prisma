@@ -47,7 +47,28 @@ model Configuracao {
   mensagem_cupom   String? // Texto no rodapé do cupom ex: "Obrigado pela preferência!"
   taxa_entrega_centavos Int @default(0) // Taxa padrão de delivery em centavos (0 = grátis / definida depois)
   taxa_servico_percentual Int @default(10) // % sugerido de taxa de serviço (mesa); cliente pode recusar
-  limite_desconto_sem_pin_centavos Int @default(500) // Acima disso exige PIN de GERENTE+
+  limite_desconto_sem_pin_centavos Int @default(500) // Acima disso o ATENDENTE precisa de PIN
+  limite_desconto_atendente_percentual Int @default(10)
+  limite_desconto_gerente_percentual Int @default(30)
+  limite_desconto_gerente_centavos Int @default(5000)
+
+  usa_gaveta Boolean @default(false)
+  lat Float?
+  lng Float?
+  entrega_raio_max_m Int?
+  entrega_modo_distancia String @default("linha_reta")
+  entrega_fator_rota Int @default(130)
+  estoque_nivel Int @default(0) // 0 desligado, 1 esgotado, 2 quantidade. 3 e 4 não são construídos
+  estoque_permite_negativo Boolean @default(false)
+  estoque_reset_esgotados_dia Boolean @default(true)
+  modulo_delivery Boolean @default(true)
+  modulo_promocoes Boolean @default(false)
+  horario_inicio_min Int @default(420) // 07:00
+  horario_fim_min Int @default(1440) // 00:00 (fim exclusivo do dia)
+  alerta_dif_caixa_centavos Int @default(1000)
+  alerta_cancelamentos Int @default(3)
+  alerta_cancelamentos_min Int @default(60)
+  kds_atraso_min Int @default(15)
 
   // Impressoras padrão (roteamento global)
   impressora_padrao_id   Int? // Fallback da loja (obrigatória se houver impressoras)
@@ -91,6 +112,7 @@ model Usuario {
   telefone   String? // Telefone (opcional) ex: (34) 99999-9999
 
   ativo Boolean @default(true) // Funcionário que sai é desativado, nunca apagado (mantém os logs)
+  pode_operar_caixa Boolean @default(false) // Quem recebe, fecha conta e mexe no caixa
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -139,6 +161,11 @@ model Produto {
 
   exige_preparo    Boolean @default(true) // true = vai pra cozinha | false = produto pronto (refri, água)
   controla_estoque Boolean @default(false) // Liga o controle de estoque desse produto (módulo opcional)
+  unidade_base String @default("un") // un | g | ml
+  esgotado Boolean @default(false)
+  esgotado_em DateTime?
+  esgotado_por_id Int?
+  esgotado_origem String? // manual | saldo
 
   ativo Boolean @default(true)
 
@@ -160,6 +187,10 @@ model Produto_variante {
   preco_centavos Int // Preço em centavos ex: 1000 = R$ 10,00
   caminho_imagem String? // Imagem própria (opcional). Se não tiver, usa a do produto
   codigo_barras  String? // Código de barras (opcional), pra produto de revenda
+  esgotado Boolean @default(false)
+  esgotado_em DateTime?
+  esgotado_por_id Int?
+  esgotado_origem String?
 
   ativo Boolean @default(true)
 
@@ -199,6 +230,10 @@ model Opcao_escolha {
   nome                 String // Nome da opção ex: Morango, Banana, Nutella
   preco_extra_centavos Int     @default(0) // Valor a mais (opcional) ex: Nutella +300 = R$ 3,00
   ordem                Int     @default(0) // Posição da opção na tela
+  esgotado             Boolean @default(false)
+  esgotado_em          DateTime?
+  esgotado_por_id      Int?
+  esgotado_origem      String?
   ativo                Boolean @default(true)
 
   createdAt DateTime @default(now())
@@ -282,6 +317,10 @@ model Adicional_variante {
   nome           String // Nome da variante ex: Bacon 50g, Catupiry Grande
   caminho_imagem String? // Imagem própria (opcional). Se não tiver, usa a do adicional
   preco_centavos Int // Preço em centavos ex: 300 = R$ 3,00
+  esgotado Boolean @default(false)
+  esgotado_em DateTime?
+  esgotado_por_id Int?
+  esgotado_origem String?
 
   ativo Boolean @default(true)
 
@@ -304,12 +343,14 @@ enum Tipo_atendimento {
   RETIRADA // Cliente busca
   ENTREGA // Delivery
   MESA // Consumo na mesa
+  VENDA_RAPIDA // PDV puro: cobra e fecha na hora, sem mesa, nome ou comanda
 }
 
 enum Status_atendimento {
   ABERTO // Conta aberta, recebendo pedidos
   FECHADO // Conta paga e encerrada
   CANCELADO // Cancelado (com motivo no log)
+  JUNTADO // Conta absorvida por outra (não é cancelamento)
 }
 
 enum Status_pedido {
@@ -346,11 +387,22 @@ model Atendimento {
   // Ajustes enquanto aberto
   desconto_centavos   Int     @default(0)
   desconto_motivo     String?
+  desconto_tipo       String  @default("VALOR") // VALOR | PERCENTUAL
+  desconto_percentual Int     @default(0)
+  desconto_aprovador_id Int?
+  cortesia            Boolean @default(false)
   acrescimo_centavos  Int     @default(0)
   acrescimo_motivo    String?
+  acrescimo_aprovador_id Int?
   taxa_servico_centavos Int   @default(0) // Valor aplicado (0 se recusou)
   taxa_servico_aplicada Boolean @default(false)
   taxa_entrega_centavos Int   @default(0) // Cópia no atendimento (ENTREGA)
+  entrega_distancia_m Int?
+  taxa_entrega_origem String?
+  taxa_entrega_calculada_centavos Int?
+  numero_dia Int?
+  dia_operacao String?
+  conta_pedida_em DateTime?
 
   // Totais congelados só no FECHAR (relatórios)
   subtotal_centavos            Int?
@@ -377,6 +429,14 @@ model Atendimento {
   mesa_id Int?
   mesa    Mesa? @relation(fields: [mesa_id], references: [id]) // Só quando o tipo é MESA
 
+  cliente_id Int?
+  cliente    Cliente? @relation(fields: [cliente_id], references: [id])
+  endereco_entrega_id Int?
+  endereco_entrega    Cliente_endereco? @relation(fields: [endereco_entrega_id], references: [id])
+
+  caixa_sessao_id Int?
+  caixa_sessao    Caixa_sessao? @relation(fields: [caixa_sessao_id], references: [id])
+
   pedidos             Pedido[]
   pagamentos          Pagamento[]
   trabalhos_impressao Trabalho_impressao[]
@@ -386,6 +446,9 @@ model Pedido {
   id            Int           @id @default(autoincrement())
   codigo_pedido String        @unique // Gerado pelo sistema ex: PD0001
   status        Status_pedido @default(ENVIADO)
+  preparo_em DateTime?
+  pronto_em DateTime?
+  entregue_em DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -404,7 +467,16 @@ model Pedido_item {
 
   // Cópia do momento da venda (histórico não muda se o cardápio mudar)
   nome_produto   String // ex: Pastel de carne - Grande
-  preco_centavos Int // Preço unitário da variante na hora da venda
+  preco_centavos Int // Preço unitário cobrado (já com promoção, quando for por unidade)
+  preco_original_centavos Int?
+  desconto_promocao_centavos Int @default(0)
+  promocao_id Int?
+  promocao Promocao? @relation(fields: [promocao_id], references: [id])
+  nome_promocao String?
+  desconto_manual_centavos Int @default(0)
+  desconto_motivo String?
+  desconto_usuario_id Int?
+  desconto_aprovador_id Int?
   quantidade     Int     @default(1)
   observacao     String? // ex: Sem cebola
 
@@ -503,6 +575,7 @@ enum Status_trabalho_impressao {
   IMPRIMINDO
   IMPRESSO
   ERRO
+  CANCELADO
 }
 
 model Config_documento {
@@ -518,6 +591,7 @@ model Config_documento {
 model Impressora {
   id   Int    @id @default(autoincrement())
   nome String // ex: Cozinha, Bar, Caixa
+  estacao String? // cozinha | bar, para o KDS
 
   tipo_conexao Tipo_conexao_impressora @default(REDE)
 
@@ -610,7 +684,8 @@ model Sequencia {
 model Forma_pagamento {
   id          Int     @id @default(autoincrement())
   nome        String  @unique // Dinheiro, Pix, Débito, Crédito, Vale-refeição
-  abre_gaveta Boolean @default(false) // Só dinheiro, em geral
+  abre_gaveta Boolean @default(false) // A impressora tem pulso; o dinheiro em si é eh_dinheiro
+  eh_dinheiro Boolean @default(false)
   ordem       Int     @default(0)
   ativo       Boolean @default(true)
 
@@ -624,6 +699,7 @@ model Caixa_sessao {
   id Int @id @default(autoincrement())
 
   fundo_troco_centavos Int @default(0)
+  aberta Boolean @default(false) // 1 só enquanto a sessão está aberta (índice único parcial)
 
   aberto_em  DateTime  @default(now())
   fechado_em DateTime?
@@ -631,6 +707,7 @@ model Caixa_sessao {
   valor_esperado_centavos  Int? // Calculado no fechamento
   valor_informado_centavos Int? // Contagem física
   diferenca_centavos       Int?
+  contagem_json            String? // contagem por forma no fechamento cego
 
   usuario_abertura_id Int
   usuario_abertura    Usuario @relation("CaixaAbertura", fields: [usuario_abertura_id], references: [id])
@@ -640,6 +717,7 @@ model Caixa_sessao {
 
   pagamentos     Pagamento[]
   movimentacoes  Movimentacao_caixa[]
+  atendimentos   Atendimento[]
 }
 
 enum Tipo_movimentacao_caixa {
@@ -700,6 +778,8 @@ model Requisicao_idempotente {
   usuario       Usuario  @relation(fields: [usuario_id], references: [id])
   resposta_json String
   status_http   Int
+  hash_payload  String   @default("")
+  em_andamento  Boolean  @default(false)
   criado_em     DateTime @default(now())
 
   @@unique([chave, usuario_id, rota])
@@ -717,4 +797,195 @@ model Log_auditoria {
 
   usuario_id Int
   usuario    Usuario @relation(fields: [usuario_id], references: [id])
+}
+
+// =====================================================
+// CLIENTES, ENTREGA, ESTOQUE, PROMOÇÃO, AUDITORIA
+// =====================================================
+
+model Cliente {
+  id           Int      @id @default(autoincrement())
+  nome         String
+  telefone     String
+  telefone2    String?
+  observacao   String?
+  ativo        Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  enderecos    Cliente_endereco[]
+  atendimentos Atendimento[]
+}
+
+model Cliente_endereco {
+  id           Int      @id @default(autoincrement())
+  cliente_id   Int
+  cliente      Cliente  @relation(fields: [cliente_id], references: [id])
+  apelido      String?
+  cep          String?
+  logradouro   String
+  numero       String?
+  sem_numero   Boolean  @default(false)
+  complemento  String?
+  bairro       String
+  cidade       String
+  uf           String
+  referencia   String?
+  lat          Float?
+  lng          Float?
+  geo_origem   String   @default("nenhuma")
+  ativo        Boolean  @default(true)
+  principal    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  atendimentos Atendimento[]
+}
+
+model Faixa_entrega {
+  id            Int     @id @default(autoincrement())
+  ate_m         Int
+  taxa_centavos Int
+  ordem         Int     @default(0)
+  ativo         Boolean @default(true)
+}
+
+model Bairro_entrega {
+  id               Int     @id @default(autoincrement())
+  nome             String
+  nome_normalizado String
+  cidade           String
+  taxa_centavos    Int
+  atende           Boolean @default(true)
+  ativo            Boolean @default(true)
+
+  @@unique([nome_normalizado, cidade])
+}
+
+model Cache_cep {
+  cep           String   @id
+  dados         String
+  atualizado_em DateTime @default(now())
+}
+
+model Cache_geo {
+  chave         String   @id
+  lat           Float
+  lng           Float
+  precisao      String
+  atualizado_em DateTime @default(now())
+}
+
+model Saldo_estoque {
+  id        Int    @id @default(autoincrement())
+  item_tipo String
+  item_id   Int
+  qtd_base  Int    @default(0)
+
+  @@unique([item_tipo, item_id])
+}
+
+model Estoque_minimo {
+  id          Int    @id @default(autoincrement())
+  item_tipo   String
+  item_id     Int
+  minimo_base Int
+
+  @@unique([item_tipo, item_id])
+}
+
+model Movimento_estoque {
+  id                  Int      @id @default(autoincrement())
+  item_tipo           String
+  item_id             Int
+  tipo                String
+  qtd_base            Int
+  custo_unit_centavos Int?
+  pedido_item_id      Int?
+  motivo              String?
+  usuario_id          Int?
+  aprovador_id        Int?
+  criado_em           DateTime @default(now())
+
+  @@index([item_tipo, item_id, criado_em])
+}
+
+model Promocao {
+  id                     Int       @id @default(autoincrement())
+  nome                   String
+  tipo                   String
+  percentual             Int?
+  valor_centavos         Int?
+  preco_fixo_centavos    Int?
+  leve                   Int?
+  pague                  Int?
+  inicio_em              DateTime?
+  fim_em                 DateTime?
+  dias_semana            Int       @default(127)
+  hora_inicio_min        Int?
+  hora_fim_min           Int?
+  tipos_atendimento      String    @default("MESA,BALCAO,RETIRADA,ENTREGA,VENDA_RAPIDA")
+  limite_por_atendimento Int?
+  limite_total           Int?
+  usos                   Int       @default(0)
+  acumulavel             Boolean   @default(false)
+  prioridade             Int       @default(0)
+  inclui_extras          Boolean   @default(false)
+  ativo                  Boolean   @default(true)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  alvos                  Promocao_alvo[]
+  itens                  Pedido_item[]
+}
+
+model Promocao_alvo {
+  id                  Int      @id @default(autoincrement())
+  promocao_id         Int
+  promocao            Promocao @relation(fields: [promocao_id], references: [id])
+  produto_id          Int?
+  produto_variante_id Int?
+  categoria_id        Int?
+}
+
+model Evento_auditoria {
+  id               Int      @id @default(autoincrement())
+  criado_em        DateTime
+  tipo             String
+  sensivel         Boolean  @default(false)
+  destaque         Boolean  @default(false)
+  usuario_id       Int?
+  usuario_nome     String   @default("")
+  usuario_perfil   String   @default("")
+  aprovador_id     Int?
+  aprovador_nome   String?
+  aprovado_com_pin Boolean  @default(false)
+  terminal_nome    String?
+  ip               String?
+  user_agent       String?
+  alvo_tipo        String?
+  alvo_id          Int?
+  alvo_rotulo      String?
+  mesa_id          Int?
+  atendimento_id   Int?
+  valor_antes      String?
+  valor_depois     String?
+  valor_centavos   Int?
+  motivo           String?
+  resultado        String   @default("ok")
+  codigo_erro      String?
+  detalhes         String?
+  hash_anterior    String   @unique
+  hash             String
+
+  @@index([criado_em])
+  @@index([usuario_id, criado_em])
+  @@index([atendimento_id])
+  @@index([tipo, criado_em])
+}
+
+model Alerta_visto {
+  id         Int      @id @default(autoincrement())
+  evento_id  Int
+  usuario_id Int
+  visto_em   DateTime @default(now())
+
+  @@unique([evento_id, usuario_id])
 }

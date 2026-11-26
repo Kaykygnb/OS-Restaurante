@@ -7,7 +7,7 @@ import {
   type ImpressoraDestino,
 } from "../impressao/destino.js";
 import { documentoProducao } from "../impressao/documentos.js";
-import { enfileirarTrabalho } from "../impressao/fila.js";
+import { enfileirarTrabalho, tentarEnviarTrabalho } from "../impressao/fila.js";
 
 export type ItemRoteavel = {
   id: number;
@@ -18,7 +18,12 @@ export type ItemRoteavel = {
   escolhas: { nome_opcao: string; quantidade: number }[];
   adicionais: { nome_adicional: string; quantidade: number }[];
   produto_variante: {
-    produto: { exige_preparo: boolean; categoria_id: number; nao_imprime?: boolean };
+    produto: {
+      exige_preparo: boolean;
+      categoria_id: number;
+      nao_imprime?: boolean;
+      categoria?: { nome: string } | null;
+    };
   };
 };
 
@@ -29,17 +34,25 @@ export type ResultadoImpressao = {
 };
 
 function mapItensCupom(itens: ItemRoteavel[]) {
-  return itens.map((i) => ({
-    quantidade: i.quantidade,
-    nome: i.nome_produto,
-    observacao: i.observacao,
-    escolhas: i.escolhas.map((e) =>
-      e.quantidade > 1 ? `${e.quantidade}x ${e.nome_opcao}` : e.nome_opcao
-    ),
-    adicionais: i.adicionais.map((a) =>
-      a.quantidade > 1 ? `${a.quantidade}x ${a.nome_adicional}` : a.nome_adicional
-    ),
-  }));
+  return itens.map((i) => {
+    const linha: {
+      quantidade: number;
+      nome: string;
+      observacao: string | null;
+      escolhas: string[];
+      adicionais: string[];
+      categoria?: string;
+    } = {
+      quantidade: i.quantidade,
+      nome: i.nome_produto,
+      observacao: i.observacao,
+      escolhas: i.escolhas.map((e) => (e.quantidade > 1 ? `${e.quantidade}x ${e.nome_opcao}` : e.nome_opcao)),
+      adicionais: i.adicionais.map((a) => (a.quantidade > 1 ? `${a.quantidade}x ${a.nome_adicional}` : a.nome_adicional)),
+    };
+    const categoria = i.produto_variante.produto.categoria?.nome;
+    if (categoria) linha.categoria = categoria;
+    return linha;
+  });
 }
 
 async function enfileirarVias(opts: {
@@ -76,6 +89,7 @@ export async function enfileirarProducaoPedido(opts: {
   codigo_atendimento: string;
   mesa_numero?: number | null;
   tipo_atendimento: string;
+  numero_dia?: number | null;
   itens: ItemRoteavel[];
   cancelamento?: boolean;
   reimpressao?: boolean;
@@ -165,6 +179,7 @@ export async function enfileirarProducaoPedido(opts: {
       codigo_atendimento: opts.codigo_atendimento,
       mesa: opts.mesa_numero != null ? String(opts.mesa_numero) : null,
       tipo_atendimento: opts.tipo_atendimento,
+      numero_dia: opts.numero_dia ?? null,
       setor: impressora.nome,
       garcom_nome: opts.garcom_nome ?? null,
       observacao_atendimento: opts.observacao_atendimento ?? null,
@@ -175,7 +190,14 @@ export async function enfileirarProducaoPedido(opts: {
       hora_original: opts.hora_original ?? origemJob?.criado_em ?? null,
       tamanho_letra: impressora.tamanho_letra_producao,
       apita: impressora.apita,
-      itens: mapItensCupom(itens),
+      itens: mapItensCupom(
+        [...itens].sort((a, b) =>
+          (a.produto_variante.produto.categoria?.nome ?? "").localeCompare(
+            b.produto_variante.produto.categoria?.nome ?? "",
+            "pt-BR"
+          )
+        )
+      ),
     });
 
     const ids = await enfileirarVias({
@@ -188,10 +210,27 @@ export async function enfileirarProducaoPedido(opts: {
       documento_origem_id: origemJob?.id ?? null,
     });
     trabalhos.push(...ids);
+    for (const id of ids) {
+      await tentarEnviarTrabalho(id);
+      const job = await prisma.trabalho_impressao.findUnique({
+        where: { id },
+        select: { status: true, ultimo_erro: true },
+      });
+      if (job?.status === "ERRO" && job.ultimo_erro) avisos.push(job.ultimo_erro);
+    }
   }
 
+  const falhou = trabalhos.length
+    ? (
+        await prisma.trabalho_impressao.findMany({
+          where: { id: { in: trabalhos } },
+          select: { status: true },
+        })
+      ).some((job) => job.status === "ERRO")
+    : false;
+
   return {
-    status: trabalhos.length ? "OK" : "SEM_DESTINO",
+    status: trabalhos.length ? (falhou ? "ERRO" : "OK") : "SEM_DESTINO",
     trabalhos,
     avisos: [...new Set(avisos)],
   };
