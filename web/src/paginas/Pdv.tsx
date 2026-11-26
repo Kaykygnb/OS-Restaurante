@@ -1,18 +1,23 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import Ajuda from "../componentes/Ajuda";
-import { api } from "../servicos/api";
+import Avisos from "../componentes/Avisos";
+import Modal from "../componentes/Modal";
+import { useAviso } from "../hooks/useAviso";
+import { api, novaChaveIdempotencia } from "../servicos/api";
 import { formatarReais } from "../util/dinheiro";
+import { nomeAdicional, tituloAtendimento } from "../util/rotulos";
+import {
+  linhaCentavos,
+  lerRascunho,
+  gravarRascunho,
+  apagarRascunho,
+  alternarEscolha,
+  resumoGrupo,
+  type CarrinhoLinha,
+  type GrupoEsc,
+} from "./pdv-regras";
 
-type Opcao = { id: number; nome: string; preco_extra_centavos: number };
-type GrupoEsc = {
-  id: number;
-  nome: string;
-  min_escolhas: number;
-  max_escolhas: number;
-  permite_repetir: boolean;
-  opcoes: Opcao[];
-};
 type Variante = {
   id: number;
   nome: string;
@@ -24,6 +29,7 @@ type ProdutoPdv = {
   id: number;
   nome: string;
   exige_preparo: boolean;
+  preco_desde_centavos?: number;
   variantes: Variante[];
   grupos_adicionais: {
     id: number;
@@ -33,30 +39,42 @@ type ProdutoPdv = {
 };
 type CatPdv = { id: number; nome: string; produtos: ProdutoPdv[] };
 
-type CarrinhoLinha = {
-  key: string;
-  produto_variante_id: number;
-  nome: string;
-  preco_centavos: number;
+type ItemEnviado = {
+  id: number;
+  nome_produto: string;
   quantidade: number;
-  observacao: string;
-  escolhas: { opcao_escolha_id: number; nome: string; preco_extra_centavos: number; quantidade: number }[];
-  adicionais: { adicional_variante_id: number; nome: string; preco_centavos: number; quantidade: number }[];
+  observacao: string | null;
+  cancelado: boolean;
+  escolhas?: { nome_opcao: string; quantidade: number }[];
+  adicionais?: { nome_adicional: string; quantidade: number }[];
+};
+type AtendimentoPdv = {
+  id: number;
+  status: string;
+  codigo_atendimento: string;
+  cliente_nome: string | null;
+  tipo_atendimento: string;
+  mesa: { numero: number } | null;
+  totais?: { total_centavos: number };
+  pedidos?: { id: number; codigo_pedido: string; itens: ItemEnviado[] }[];
 };
 
-function linhaCentavos(l: CarrinhoLinha) {
-  const extras =
-    l.escolhas.reduce((a, e) => a + e.preco_extra_centavos * e.quantidade, 0) +
-    l.adicionais.reduce((a, e) => a + e.preco_centavos * e.quantidade, 0);
-  return l.quantidade * (l.preco_centavos + extras);
+function precoDesde(p: ProdutoPdv) {
+  if (typeof p.preco_desde_centavos === "number") return p.preco_desde_centavos;
+  return p.variantes.reduce((m, v) => Math.min(m, v.preco_centavos), Number.POSITIVE_INFINITY);
+}
+
+function semAcento(s: string) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
 export default function Pdv() {
   const { atendimentoId } = useParams();
   const id = Number(atendimentoId);
-  if (!Number.isFinite(id)) return <Navigate to="/painel/mesas" replace />;
+  const idValido = Number.isFinite(id) && id > 0;
+  const navegar = useNavigate();
 
-  const [atendimento, setAtendimento] = useState<any>(null);
+  const [atendimento, setAtendimento] = useState<AtendimentoPdv | null>(null);
   const [cats, setCats] = useState<CatPdv[]>([]);
   const [catId, setCatId] = useState<number | null>(null);
   const [busca, setBusca] = useState("");
@@ -65,18 +83,22 @@ export default function Pdv() {
   const [qtdItem, setQtdItem] = useState(1);
   const [escolhasSel, setEscolhasSel] = useState<Record<number, number>>({});
   const [adicionaisSel, setAdicionaisSel] = useState<Record<number, number>>({});
+  const [avisoMontagem, setAvisoMontagem] = useState("");
   const [obs, setObs] = useState("");
-  const [carrinho, setCarrinho] = useState<CarrinhoLinha[]>([]);
-  const [erro, setErro] = useState("");
-  const [ok, setOk] = useState("");
+  const [carrinho, setCarrinho] = useState<CarrinhoLinha[]>(() => (idValido ? lerRascunho(id) : []));
+  const { erro, ok, setErro, setOk, limpar } = useAviso();
   const [avisos, setAvisos] = useState<string[]>([]);
   const [enviando, setEnviando] = useState(false);
+  const [carrinhoAberto, setCarrinhoAberto] = useState(false);
+  const [confirmar, setConfirmar] = useState<null | { tipo: "limpar" } | { tipo: "sair"; para: string }>(null);
+  /** Mesma chave enquanto o garçom tenta reenviar o MESMO carrinho: o servidor não duplica o pedido. */
+  const chaveEnvio = useRef<string | null>(null);
 
   const carregar = useCallback(async () => {
-    setErro("");
+    if (!idValido) return;
     try {
       const [at, card] = await Promise.all([
-        api(`/atendimentos/${id}`),
+        api(`/atendimentos/${id}`) as Promise<AtendimentoPdv>,
         api("/cardapio/pdv") as Promise<CatPdv[]>,
       ]);
       setAtendimento(at);
@@ -85,17 +107,24 @@ export default function Pdv() {
     } catch (e) {
       setErro((e as Error).message);
     }
-  }, [id]);
+  }, [id, idValido, setErro]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- carga de dados da tela (fetch)
     void carregar();
   }, [carregar]);
 
+  useEffect(() => {
+    if (!idValido) return;
+    gravarRascunho(id, carrinho);
+    chaveEnvio.current = null;
+  }, [id, idValido, carrinho]);
+
   const produtos = useMemo(() => {
-    const lista = cats.find((c) => c.id === catId)?.produtos ?? [];
-    const q = busca.trim().toLowerCase();
-    if (!q) return lista;
-    return lista.filter((p) => p.nome.toLowerCase().includes(q));
+    const q = semAcento(busca.trim());
+    if (!q) return cats.find((c) => c.id === catId)?.produtos ?? [];
+    // Busca no cardápio inteiro, não só na categoria aberta.
+    return cats.flatMap((c) => c.produtos).filter((p) => semAcento(p.nome).includes(q));
   }, [cats, catId, busca]);
 
   const variante = useMemo(
@@ -104,6 +133,16 @@ export default function Pdv() {
   );
 
   const totalCarrinho = useMemo(() => carrinho.reduce((s, l) => s + linhaCentavos(l), 0), [carrinho]);
+  const qtdCarrinho = useMemo(() => carrinho.reduce((s, l) => s + l.quantidade, 0), [carrinho]);
+  const jaPedido = useMemo(
+    () =>
+      (atendimento?.pedidos ?? []).flatMap((p) =>
+        p.itens.map((i) => ({ ...i, codigo_pedido: p.codigo_pedido }))
+      ),
+    [atendimento]
+  );
+
+  if (!idValido) return <Navigate to="/painel/mesas" replace />;
 
   function abrirProduto(p: ProdutoPdv) {
     setProduto(p);
@@ -111,40 +150,36 @@ export default function Pdv() {
     setQtdItem(1);
     setEscolhasSel({});
     setAdicionaisSel({});
+    setAvisoMontagem("");
     setObs("");
-    setErro("");
+    limpar();
   }
 
-  function toggleEscolha(grupo: GrupoEsc, opcaoId: number) {
-    setEscolhasSel((prev) => {
-      const next = { ...prev };
-      const atual = next[opcaoId] ?? 0;
-      if (grupo.permite_repetir) {
-        next[opcaoId] = atual + 1;
-        return next;
-      }
-      if (grupo.max_escolhas === 1) {
-        for (const op of grupo.opcoes) delete next[op.id];
-        next[opcaoId] = 1;
-        return next;
-      }
-      if (atual) {
-        delete next[opcaoId];
-        return next;
-      }
-      const doGrupo = grupo.opcoes.reduce((s, o) => s + (next[o.id] ?? 0), 0);
-      if (doGrupo >= grupo.max_escolhas) return prev;
-      next[opcaoId] = 1;
-      return next;
-    });
+  function tocarEscolha(grupo: GrupoEsc, opcaoId: number) {
+    const r = alternarEscolha(escolhasSel, grupo, opcaoId);
+    setEscolhasSel(r.selecao);
+    setAvisoMontagem(r.aviso ?? "");
+  }
+
+  function mudarAdicional(varId: number, max: number, delta: 1 | -1, nome: string) {
+    const novo = Math.max(0, (adicionaisSel[varId] ?? 0) + delta);
+    if (novo > max) {
+      setAvisoMontagem(`No máximo ${max} de ${nome} por item.`);
+      return;
+    }
+    setAvisoMontagem("");
+    const n = { ...adicionaisSel };
+    if (novo === 0) delete n[varId];
+    else n[varId] = novo;
+    setAdicionaisSel(n);
   }
 
   function addCarrinho() {
     if (!produto || !variante) return;
     for (const g of variante.grupos_escolhas) {
       const total = g.opcoes.reduce((s, o) => s + (escolhasSel[o.id] ?? 0), 0);
-      if (total < g.min_escolhas) return setErro(`Escolha no mínimo ${g.min_escolhas} em "${g.nome}"`);
-      if (total > g.max_escolhas) return setErro(`No máximo ${g.max_escolhas} em "${g.nome}"`);
+      if (total < g.min_escolhas) return setAvisoMontagem(`Escolha no mínimo ${g.min_escolhas} em "${g.nome}".`);
+      if (total > g.max_escolhas) return setAvisoMontagem(`No máximo ${g.max_escolhas} em "${g.nome}".`);
     }
 
     const escolhas = variante.grupos_escolhas.flatMap((g) =>
@@ -163,7 +198,7 @@ export default function Pdv() {
           .filter((v) => (adicionaisSel[v.id] ?? 0) > 0)
           .map((v) => ({
             adicional_variante_id: v.id,
-            nome: v.nome,
+            nome: nomeAdicional(a.nome, v.nome),
             preco_centavos: v.preco_centavos,
             quantidade: adicionaisSel[v.id]!,
           }))
@@ -177,7 +212,7 @@ export default function Pdv() {
     setCarrinho((c) => [
       ...c,
       {
-        key: `${Date.now()}-${variante.id}`,
+        key: `${Date.now()}-${variante.id}-${c.length}`,
         produto_variante_id: variante.id,
         nome,
         preco_centavos: variante.preco_centavos,
@@ -188,27 +223,27 @@ export default function Pdv() {
       },
     ]);
     setProduto(null);
-    setErro("");
-    setOk("Adicionado ao pedido");
+    setAvisoMontagem("");
+    setOk(`${Math.max(1, qtdItem)}× ${nome} no pedido`);
   }
 
   async function enviar() {
-    if (!carrinho.length) return setErro("Carrinho vazio");
+    if (!carrinho.length) return setErro("O pedido está vazio");
+    if (!chaveEnvio.current) chaveEnvio.current = novaChaveIdempotencia();
     setEnviando(true);
     setErro("");
     setAvisos([]);
     try {
       const res = (await api(`/atendimentos/${id}/pedidos`, {
         method: "POST",
+        chaveIdempotencia: chaveEnvio.current,
+        tempoLimiteMs: 20000,
         body: JSON.stringify({
           itens: carrinho.map((l) => ({
             produto_variante_id: l.produto_variante_id,
             quantidade: l.quantidade,
             observacao: l.observacao || null,
-            escolhas: l.escolhas.map((e) => ({
-              opcao_escolha_id: e.opcao_escolha_id,
-              quantidade: e.quantidade,
-            })),
+            escolhas: l.escolhas.map((e) => ({ opcao_escolha_id: e.opcao_escolha_id, quantidade: e.quantidade })),
             adicionais: l.adicionais.map((a) => ({
               adicional_variante_id: a.adicional_variante_id,
               quantidade: a.quantidade,
@@ -216,21 +251,30 @@ export default function Pdv() {
           })),
         }),
       })) as { pedido: { codigo_pedido: string }; impressao?: { avisos?: string[] } };
-      setOk(`Pedido ${res.pedido.codigo_pedido} enviado à cozinha`);
+      setOk(`Pedido ${res.pedido.codigo_pedido} enviado`);
       setAvisos(res.impressao?.avisos ?? []);
       setCarrinho([]);
+      apagarRascunho(id);
+      chaveEnvio.current = null;
+      setCarrinhoAberto(false);
       await carregar();
     } catch (e) {
-      setErro((e as Error).message);
+      // Mantém a chave: se o pedido chegou mas a resposta se perdeu, o reenvio não duplica.
+      setErro(`${(e as Error).message} O pedido continua aqui; toque em Enviar de novo.`);
     } finally {
       setEnviando(false);
     }
   }
 
+  function sairPara(para: string) {
+    if (carrinho.length) setConfirmar({ tipo: "sair", para });
+    else navegar(para);
+  }
+
   if (!atendimento) {
     return (
       <div className="cardapio">
-        {erro ? <p className="feedback-card feedback-erro">{erro}</p> : <p>Carregando PDV…</p>}
+        {erro ? <Avisos erro={erro} /> : <p role="status">Carregando PDV…</p>}
       </div>
     );
   }
@@ -238,24 +282,28 @@ export default function Pdv() {
   if (atendimento.status !== "ABERTO") {
     return (
       <div className="cardapio">
-        <p className="feedback-card feedback-erro">Atendimento não está aberto.</p>
-        <Link to="/painel/mesas">Voltar às mesas</Link>
+        <p className="feedback-card feedback-erro" role="alert">
+          Esta conta não está mais aberta.
+        </p>
+        <Link className="btn-sec" to="/painel/mesas">
+          Voltar às mesas
+        </Link>
       </div>
     );
   }
 
-  const tituloMesa = atendimento.mesa
-    ? `Mesa ${atendimento.mesa.numero}`
-    : atendimento.tipo_atendimento;
+  const tituloMesa = tituloAtendimento(atendimento);
+  const ehEntrega = atendimento.tipo_atendimento === "ENTREGA" || atendimento.tipo_atendimento === "RETIRADA";
+  const voltar = ehEntrega ? { para: "/painel/delivery", rotulo: "Delivery" } : { para: "/painel/mesas", rotulo: "Mesas" };
 
   return (
-    <div className="cardapio pdv-pagina">
+    <div className={`cardapio pdv-pagina${carrinho.length ? " com-barra-carrinho" : ""}`}>
       <section className="pdv-topbar">
         <div>
           <span className="cardapio-kicker">LANÇAMENTO</span>
           <h2 className="titulo-com-ajuda">
             {tituloMesa}
-            <Ajuda texto="Toque no produto, monte o item e envie. O carrinho fica sempre à direita." />
+            <Ajuda texto="Toque no produto, monte o item e toque em Adicionar. Depois envie o pedido." />
           </h2>
           <p>
             {atendimento.codigo_atendimento}
@@ -265,53 +313,79 @@ export default function Pdv() {
           </p>
         </div>
         <div className="config-toolbar-inline">
-          <Link className="btn-sec" to={`/painel/conta/${id}`}>
+          <button type="button" className="btn-sec" onClick={() => sairPara(`/painel/conta/${id}`)}>
             Conta / pagar
-          </Link>
-          <Link className="btn-ghost" to="/painel/mesas">
-            Mesas
-          </Link>
+          </button>
+          <button type="button" className="btn-ghost" onClick={() => sairPara(voltar.para)}>
+            {voltar.rotulo}
+          </button>
         </div>
       </section>
 
-      {erro ? <p className="feedback-card feedback-erro">{erro}</p> : null}
-      {ok ? <p className="feedback-card feedback-ok">{ok}</p> : null}
-      {avisos.map((a) => (
-        <p key={a} className="feedback-card config-aviso-ip">
-          {a}
-        </p>
-      ))}
+      <Avisos erro={erro} ok={ok} avisos={avisos} />
+
+      {jaPedido.length ? (
+        <details className="pdv-ja-pedido painel-bloco">
+          <summary>
+            Já pedido nesta conta · {jaPedido.filter((i) => !i.cancelado).reduce((s, i) => s + i.quantidade, 0)}{" "}
+            item(ns)
+          </summary>
+          <ul>
+            {jaPedido.map((i) => (
+              <li key={i.id} className={i.cancelado ? "cancelado" : ""}>
+                <strong>
+                  {i.quantidade}× {i.nome_produto}
+                </strong>
+                <span>
+                  {i.codigo_pedido}
+                  {[...(i.escolhas ?? []).map((e) => e.nome_opcao), ...(i.adicionais ?? []).map((a) => `+ ${a.nome_adicional}`)]
+                    .filter(Boolean)
+                    .map((t) => ` · ${t}`)
+                    .join("")}
+                  {i.observacao ? ` · ${i.observacao}` : ""}
+                  {i.cancelado ? " · cancelado" : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
 
       <div className="pdv-layout">
         <section className="painel-bloco pdv-catalogo">
           <div className="pdv-catalogo-cab">
             <input
               className="pdv-busca"
+              type="search"
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
-              placeholder="Buscar produto…"
+              placeholder="Buscar em todo o cardápio…"
+              aria-label="Buscar produto em todo o cardápio"
             />
-            <div className="abas pdv-cats">
-              {cats.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={`aba${catId === c.id ? " on" : ""}`}
-                  onClick={() => {
-                    setCatId(c.id);
-                    setProduto(null);
-                    setBusca("");
-                  }}
-                >
-                  {c.nome}
-                </button>
-              ))}
-            </div>
+            {!busca.trim() ? (
+              <div className="abas pdv-cats" role="tablist" aria-label="Categorias">
+                {cats.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={catId === c.id}
+                    className={`aba${catId === c.id ? " on" : ""}`}
+                    onClick={() => {
+                      setCatId(c.id);
+                      setProduto(null);
+                    }}
+                  >
+                    {c.nome}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
 
           <div className="pdv-produtos">
             {produtos.length === 0 ? (
-              <p className="ajuda">Nenhum produto nesta categoria.</p>
+              <p className="ajuda">{busca.trim() ? `Nada encontrado para "${busca.trim()}".` : "Nenhum produto nesta categoria."}</p>
             ) : (
               produtos.map((p) => (
                 <button
@@ -321,177 +395,213 @@ export default function Pdv() {
                   onClick={() => abrirProduto(p)}
                 >
                   <strong>{p.nome}</strong>
-                  <span>{formatarReais(p.variantes[0]?.preco_centavos ?? 0)}</span>
+                  <span>
+                    {p.variantes.length > 1 ? "a partir de " : ""}
+                    {formatarReais(precoDesde(p))}
+                  </span>
                   {!p.exige_preparo ? <em className="pdv-tag">pronto</em> : null}
                 </button>
               ))
             )}
           </div>
-
           {produto && variante ? (
-            <div className="pdv-montagem">
-              <div className="form-produto-titulo">
-                <div>
-                  <span className="painel-sobretitulo">MONTAR</span>
-                  <strong>{produto.nome}</strong>
+            <>
+              <button type="button" className="folha-fundo" aria-label="Fechar item" onClick={() => setProduto(null)} />
+              <div className="pdv-montagem folha" role="dialog" aria-label={`Montar ${produto.nome}`}>
+                <div className="form-produto-titulo">
+                  <div>
+                    <span className="painel-sobretitulo">MONTAR</span>
+                    <strong>{produto.nome}</strong>
+                  </div>
+                  <button type="button" className="btn-ghost drawer-fechar" aria-label="Fechar" onClick={() => setProduto(null)}>
+                    ×
+                  </button>
                 </div>
-                <button type="button" className="btn-ghost drawer-fechar" onClick={() => setProduto(null)}>
-                  ×
-                </button>
-              </div>
 
-              {produto.variantes.length > 1 ? (
-                <div className="pdv-chips">
-                  {produto.variantes.map((v) => (
-                    <button
-                      key={v.id}
-                      type="button"
-                      className={`pdv-chip${variante.id === v.id ? " on" : ""}`}
-                      onClick={() => {
-                        setVarianteId(v.id);
-                        setEscolhasSel({});
-                      }}
-                    >
-                      {v.nome}
-                      <small>{formatarReais(v.preco_centavos)}</small>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p className="ajuda">{formatarReais(variante.preco_centavos)}</p>
-              )}
-
-              {variante.grupos_escolhas.map((g) => (
-                <div key={g.id} className="pdv-bloco">
-                  <p className="bloco-variante-titulo">
-                    {g.nome}{" "}
-                    <small className="ajuda-inline">
-                      {g.min_escolhas > 0 ? `obrigatório · até ${g.max_escolhas}` : `até ${g.max_escolhas}`}
-                    </small>
-                  </p>
-                  <div className="pdv-chips">
-                    {g.opcoes.map((o) => (
+                {produto.variantes.length > 1 ? (
+                  <div className="pdv-chips" role="radiogroup" aria-label="Tamanho / opção de preço">
+                    {produto.variantes.map((v) => (
                       <button
-                        key={o.id}
+                        key={v.id}
                         type="button"
-                        className={`pdv-chip${escolhasSel[o.id] ? " on" : ""}`}
-                        onClick={() => toggleEscolha(g, o.id)}
+                        role="radio"
+                        aria-checked={variante.id === v.id}
+                        className={`pdv-chip${variante.id === v.id ? " on" : ""}`}
+                        onClick={() => {
+                          setVarianteId(v.id);
+                          setEscolhasSel({});
+                          setAvisoMontagem("");
+                        }}
                       >
-                        {o.nome}
-                        {o.preco_extra_centavos ? (
-                          <small>+{formatarReais(o.preco_extra_centavos)}</small>
-                        ) : null}
-                        {escolhasSel[o.id] && g.permite_repetir ? (
-                          <small>×{escolhasSel[o.id]}</small>
-                        ) : null}
+                        {v.nome}
+                        <small>{formatarReais(v.preco_centavos)}</small>
                       </button>
                     ))}
                   </div>
-                </div>
-              ))}
+                ) : (
+                  <p className="ajuda">{formatarReais(variante.preco_centavos)}</p>
+                )}
 
-              {produto.grupos_adicionais?.map((g) =>
-                g.adicionais.some((a) => a.variantes.length) ? (
+                {variante.grupos_escolhas.map((g) => (
                   <div key={g.id} className="pdv-bloco">
-                    <p className="bloco-variante-titulo">{g.nome}</p>
+                    <p className="bloco-variante-titulo">
+                      {g.nome} <small className="ajuda-inline">{resumoGrupo(g)}</small>
+                    </p>
                     <div className="pdv-chips">
-                      {g.adicionais.flatMap((a) =>
-                        a.variantes.map((v) => (
-                          <button
-                            key={v.id}
-                            type="button"
-                            className={`pdv-chip${adicionaisSel[v.id] ? " on" : ""}`}
-                            onClick={() =>
-                              setAdicionaisSel((prev) => {
-                                const cur = prev[v.id] ?? 0;
-                                if (cur >= a.qtd_max) {
-                                  const n = { ...prev };
-                                  delete n[v.id];
-                                  return n;
-                                }
-                                return { ...prev, [v.id]: cur + 1 };
-                              })
-                            }
-                          >
-                            {v.nome}
-                            <small>{formatarReais(v.preco_centavos)}</small>
-                            {adicionaisSel[v.id] ? <small>×{adicionaisSel[v.id]}</small> : null}
-                          </button>
-                        ))
-                      )}
+                      {g.opcoes.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          aria-pressed={Boolean(escolhasSel[o.id])}
+                          className={`pdv-chip${escolhasSel[o.id] ? " on" : ""}`}
+                          onClick={() => tocarEscolha(g, o.id)}
+                        >
+                          {o.nome}
+                          {o.preco_extra_centavos ? <small>+{formatarReais(o.preco_extra_centavos)}</small> : null}
+                          {escolhasSel[o.id] && g.permite_repetir ? <small>×{escolhasSel[o.id]}</small> : null}
+                        </button>
+                      ))}
                     </div>
                   </div>
-                ) : null
-              )}
+                ))}
 
-              <div className="pdv-montagem-rodape">
-                <div className="pdv-qtd">
-                  <button type="button" className="btn-sec" onClick={() => setQtdItem((q) => Math.max(1, q - 1))}>
-                    −
-                  </button>
-                  <strong>{qtdItem}</strong>
-                  <button type="button" className="btn-sec" onClick={() => setQtdItem((q) => q + 1)}>
-                    +
+                {produto.grupos_adicionais?.map((g) =>
+                  g.adicionais.some((a) => a.variantes.length) ? (
+                    <div key={g.id} className="pdv-bloco">
+                      <p className="bloco-variante-titulo">
+                        {g.nome} <small className="ajuda-inline">opcional</small>
+                      </p>
+                      <div className="pdv-adicionais">
+                        {g.adicionais.flatMap((a) =>
+                          a.variantes.map((v) => {
+                            const nome = nomeAdicional(a.nome, v.nome);
+                            const qtd = adicionaisSel[v.id] ?? 0;
+                            return (
+                              <div key={v.id} className={`pdv-adicional${qtd ? " on" : ""}`}>
+                                <span>
+                                  {nome} <small>+{formatarReais(v.preco_centavos)}</small>
+                                </span>
+                                <div className="pdv-qtd sm">
+                                  <button
+                                    type="button"
+                                    className="btn-ghost"
+                                    aria-label={`Tirar ${nome}`}
+                                    disabled={!qtd}
+                                    onClick={() => mudarAdicional(v.id, a.qtd_max, -1, nome)}
+                                  >
+                                    −
+                                  </button>
+                                  <span aria-live="polite">{qtd}</span>
+                                  <button
+                                    type="button"
+                                    className="btn-ghost"
+                                    aria-label={`Pôr ${nome}`}
+                                    onClick={() => mudarAdicional(v.id, a.qtd_max, 1, nome)}
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  ) : null
+                )}
+
+                {avisoMontagem ? (
+                  <p className="feedback-card feedback-erro" role="alert">
+                    {avisoMontagem}
+                  </p>
+                ) : null}
+
+                <div className="pdv-montagem-rodape">
+                  <div className="pdv-qtd">
+                    <button
+                      type="button"
+                      className="btn-sec"
+                      aria-label="Diminuir quantidade"
+                      onClick={() => setQtdItem((q) => Math.max(1, q - 1))}
+                    >
+                      −
+                    </button>
+                    <strong aria-live="polite">{qtdItem}</strong>
+                    <button
+                      type="button"
+                      className="btn-sec"
+                      aria-label="Aumentar quantidade"
+                      onClick={() => setQtdItem((q) => q + 1)}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <input
+                    className="pdv-obs"
+                    value={obs}
+                    onChange={(e) => setObs(e.target.value)}
+                    placeholder="Observação (opcional)"
+                    aria-label="Observação do item"
+                  />
+                  <button type="button" className="btn-prim" onClick={addCarrinho}>
+                    Adicionar
                   </button>
                 </div>
-                <input
-                  className="pdv-obs"
-                  value={obs}
-                  onChange={(e) => setObs(e.target.value)}
-                  placeholder="Observação (opcional)"
-                />
-                <button type="button" className="btn-prim" onClick={addCarrinho}>
-                  Adicionar
-                </button>
               </div>
-            </div>
+            </>
           ) : null}
         </section>
 
-        <aside className="painel-bloco pdv-carrinho">
+        <aside className={`painel-bloco pdv-carrinho${carrinhoAberto ? " aberto" : ""}`} aria-label="Pedido atual">
           <header className="pdv-carrinho-cab">
             <div>
               <span className="painel-sobretitulo">PEDIDO ATUAL</span>
-              <strong>{carrinho.length} item(ns)</strong>
+              <strong>{qtdCarrinho} item(ns)</strong>
             </div>
             <strong className="pdv-carrinho-total">{formatarReais(totalCarrinho)}</strong>
+            <button
+              type="button"
+              className="btn-ghost drawer-fechar so-celular"
+              aria-label="Fechar pedido"
+              onClick={() => setCarrinhoAberto(false)}
+            >
+              ×
+            </button>
           </header>
 
           <ul className="pdv-carrinho-lista">
             {carrinho.length === 0 ? (
               <li className="lista-vazia">
                 <strong>Nada no pedido</strong>
-                <span>Escolha produtos à esquerda.</span>
+                <span>Escolha os produtos no cardápio.</span>
               </li>
             ) : (
               carrinho.map((l) => (
                 <li key={l.key} className="pdv-linha">
                   <div className="pdv-linha-info">
                     <strong>{l.nome}</strong>
-                    {(l.escolhas.length || l.adicionais.length || l.observacao) && (
+                    {l.escolhas.length || l.adicionais.length || l.observacao ? (
                       <span>
                         {[
                           ...l.escolhas.map((e) => e.nome),
-                          ...l.adicionais.map((a) => a.nome),
+                          ...l.adicionais.map((a) => `+ ${a.nome}${a.quantidade > 1 ? ` ×${a.quantidade}` : ""}`),
                           l.observacao ? `Obs: ${l.observacao}` : "",
                         ]
                           .filter(Boolean)
                           .join(" · ")}
                       </span>
-                    )}
+                    ) : null}
                     <em>{formatarReais(linhaCentavos(l))}</em>
                   </div>
                   <div className="pdv-qtd sm">
                     <button
                       type="button"
                       className="btn-ghost"
+                      aria-label={`Diminuir ${l.nome}`}
+                      disabled={l.quantidade <= 1}
                       onClick={() =>
                         setCarrinho((c) =>
-                          c
-                            .map((x) =>
-                              x.key === l.key ? { ...x, quantidade: Math.max(1, x.quantidade - 1) } : x
-                            )
-                            .filter((x) => x.quantidade > 0)
+                          c.map((x) => (x.key === l.key ? { ...x, quantidade: Math.max(1, x.quantidade - 1) } : x))
                         )
                       }
                     >
@@ -501,10 +611,9 @@ export default function Pdv() {
                     <button
                       type="button"
                       className="btn-ghost"
+                      aria-label={`Aumentar ${l.nome}`}
                       onClick={() =>
-                        setCarrinho((c) =>
-                          c.map((x) => (x.key === l.key ? { ...x, quantidade: x.quantidade + 1 } : x))
-                        )
+                        setCarrinho((c) => c.map((x) => (x.key === l.key ? { ...x, quantidade: x.quantidade + 1 } : x)))
                       }
                     >
                       +
@@ -512,7 +621,7 @@ export default function Pdv() {
                     <button
                       type="button"
                       className="btn-ghost"
-                      aria-label="Remover"
+                      aria-label={`Remover ${l.nome}`}
                       onClick={() => setCarrinho((c) => c.filter((x) => x.key !== l.key))}
                     >
                       ×
@@ -528,7 +637,7 @@ export default function Pdv() {
               type="button"
               className="btn-ghost"
               disabled={!carrinho.length || enviando}
-              onClick={() => setCarrinho([])}
+              onClick={() => setConfirmar({ tipo: "limpar" })}
             >
               Limpar
             </button>
@@ -538,11 +647,61 @@ export default function Pdv() {
               disabled={enviando || !carrinho.length}
               onClick={() => void enviar()}
             >
-              {enviando ? "Enviando…" : "Enviar pra cozinha"}
+              {enviando ? "Enviando…" : "Enviar pedido"}
             </button>
           </div>
         </aside>
       </div>
+
+      {carrinhoAberto ? (
+        <button
+          type="button"
+          className="folha-fundo"
+          aria-label="Fechar pedido"
+          onClick={() => setCarrinhoAberto(false)}
+        />
+      ) : null}
+
+      {carrinho.length && !carrinhoAberto ? (
+        <button type="button" className="pdv-barra-carrinho" onClick={() => setCarrinhoAberto(true)}>
+          <span>
+            {qtdCarrinho} item(ns) · {formatarReais(totalCarrinho)}
+          </span>
+          <strong>Ver pedido</strong>
+        </button>
+      ) : null}
+
+      {confirmar?.tipo === "limpar" ? (
+        <Modal
+          titulo="Limpar o pedido?"
+          confirmar="Limpar"
+          desistir="Voltar"
+          perigo
+          onFechar={() => setConfirmar(null)}
+          onConfirmar={() => {
+            setCarrinho([]);
+            apagarRascunho(id);
+            setConfirmar(null);
+          }}
+        >
+          <p className="ajuda">Os {qtdCarrinho} item(ns) ainda não enviados saem do pedido.</p>
+        </Modal>
+      ) : null}
+
+      {confirmar?.tipo === "sair" ? (
+        <Modal
+          titulo="Sair sem enviar?"
+          confirmar="Sair mesmo assim"
+          desistir="Ficar e enviar"
+          onFechar={() => setConfirmar(null)}
+          onConfirmar={() => navegar(confirmar.para)}
+        >
+          <p className="ajuda">
+            Há {qtdCarrinho} item(ns) que a cozinha ainda não recebeu. Eles ficam guardados neste aparelho e voltam
+            quando você abrir esta conta de novo.
+          </p>
+        </Modal>
+      ) : null}
     </div>
   );
 }
