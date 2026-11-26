@@ -14,17 +14,17 @@ async function garantirBaseOperacao() {
   });
 
   const formas = [
-    { nome: "Dinheiro", abre_gaveta: true, ordem: 1 },
-    { nome: "Pix", abre_gaveta: false, ordem: 2 },
-    { nome: "Débito", abre_gaveta: false, ordem: 3 },
-    { nome: "Crédito", abre_gaveta: false, ordem: 4 },
-    { nome: "Vale-refeição", abre_gaveta: false, ordem: 5 },
+    { nome: "Dinheiro", abre_gaveta: true, eh_dinheiro: true, ordem: 1 },
+    { nome: "Pix", abre_gaveta: false, eh_dinheiro: false, ordem: 2 },
+    { nome: "Débito", abre_gaveta: false, eh_dinheiro: false, ordem: 3 },
+    { nome: "Crédito", abre_gaveta: false, eh_dinheiro: false, ordem: 4 },
+    { nome: "Vale-refeição", abre_gaveta: false, eh_dinheiro: false, ordem: 5 },
   ];
   for (const f of formas) {
     await prisma.forma_pagamento.upsert({
       where: { nome: f.nome },
       create: f,
-      update: { abre_gaveta: f.abre_gaveta, ordem: f.ordem, ativo: true },
+      update: { abre_gaveta: f.abre_gaveta, eh_dinheiro: f.eh_dinheiro, ordem: f.ordem, ativo: true },
     });
   }
   console.log("Sequências e formas de pagamento OK");
@@ -46,6 +46,7 @@ async function main() {
         login: "root",
         tipo_usuario: "ROOT",
         senha_hash: await bcrypt.hash(senha, 10),
+        pode_operar_caixa: true,
       },
     });
     console.log("ROOT criado (login: root)");
