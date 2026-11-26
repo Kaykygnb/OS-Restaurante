@@ -975,7 +975,7 @@ a {
   right: 0;
 }
 
-.ajuda-tip:hover .ajuda-tip-bubble,
+.ajuda-tip.aberta .ajuda-tip-bubble,
 .ajuda-tip:focus-within .ajuda-tip-bubble {
   opacity: 1;
   visibility: visible;
@@ -2820,4 +2820,8 @@ a {
   .pdv-carrinho.aberto {
     animation: none;
   }
+}
+
+@media (hover: hover) {
+  .ajuda-tip:hover .ajuda-tip-bubble { opacity: 1; visibility: visible; transform: translateY(0); }
 }
